@@ -73,11 +73,6 @@ public class BidContext {
         this.slotWinners.put(slot, winner);
     }
 
-    /** Convenience — returns the first winner (for frequency recording in handler). */
-    public AdCandidate getWinner() {
-        return slotWinners.isEmpty() ? null : slotWinners.values().iterator().next();
-    }
-
     public void setResponse(BidResponse response) {
         this.response = response;
     }

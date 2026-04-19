@@ -87,6 +87,23 @@ Some DSPs intentionally bid on only one slot per request — the one with the hi
 
 This is what our current implementation does. It's not wrong — it's a valid production strategy. But it leaves revenue on the table.
 
+## Per-stage breakdown — what's shared vs per-slot
+
+| Stage | Shared or Per-slot? | Why | I/O? |
+|-------|-------------------|-----|------|
+| **RequestValidation** | Shared (once) | Validates request structure — same request regardless of slots | None |
+| **UserEnrichment** | Shared (once) | Same user viewing the page — one Redis SMEMBERS call | Redis |
+| **CandidateRetrieval** | Shared (once) | Targeting is user→campaign matching — user segments don't change per slot | None (in-memory) |
+| **FrequencyCap** | Shared (once) | "User saw Nike 5 times" is per-user per-campaign, NOT per-slot — capped for ALL slots equally | Redis |
+| **Scoring** | Shared (once) | Score = segment overlap × price × pacing — all user-dependent, not slot-dependent. Nike's relevance to user_00042 is 0.25 whether it's a 728x90 or 300x250 slot | None (arithmetic) |
+| **Creative size filter** | **Per-slot** | 300x250 creative can't go in 728x90 slot — must check per slot | None (set lookup) |
+| **Bid floor filter** | **Per-slot** | Slot-top floor $0.80 ≠ slot-sidebar floor $0.30 — must check per slot | None (comparison) |
+| **Winner selection** | **Per-slot** | Each slot picks its own highest-scoring candidate | None (max-scan) |
+| **Campaign dedup** | **Per-slot** | If Nike won slot-top, skip Nike for slot-mid and slot-sidebar | None (set lookup) |
+| **Response build** | **Per-slot** | One SlotBid per slot with winner's campaign data | None |
+
+**Key insight:** all the per-slot work is boolean checks and comparisons — zero I/O. The expensive work (Redis calls) runs once regardless of slot count.
+
 ## Why per-slot work is pure in-memory (no extra I/O)
 
 The question: if we have 3 slots, don't we need 3x the Redis calls, 3x the scoring, 3x everything?

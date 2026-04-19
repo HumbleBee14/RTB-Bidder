@@ -3,6 +3,7 @@ package com.rtb.pipeline;
 import com.rtb.model.BidRequest;
 import com.rtb.model.BidResponse;
 import com.rtb.model.NoBidReason;
+import com.rtb.model.UserProfile;
 
 /**
  * Mutable context that flows through the pipeline.
@@ -14,6 +15,7 @@ public class BidContext {
     private final long startTimeNanos;
     private final long deadlineNanos;
 
+    private UserProfile userProfile;
     private BidResponse response;
     private NoBidReason noBidReason;
 
@@ -37,6 +39,14 @@ public class BidContext {
 
     public BidResponse getResponse() {
         return response;
+    }
+
+    public UserProfile getUserProfile() {
+        return userProfile;
+    }
+
+    public void setUserProfile(UserProfile userProfile) {
+        this.userProfile = userProfile;
     }
 
     public void setResponse(BidResponse response) {

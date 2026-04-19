@@ -1,0 +1,24 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: rtb
+      POSTGRES_USER: rtb
+      POSTGRES_PASSWORD: rtb
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    profiles:
+      - full
+
+volumes:
+  redis-data:
+  postgres-data:

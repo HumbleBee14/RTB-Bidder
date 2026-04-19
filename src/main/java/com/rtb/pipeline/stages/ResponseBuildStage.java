@@ -1,5 +1,6 @@
 package com.rtb.pipeline.stages;
 
+import com.rtb.frequency.FrequencyCapper;
 import com.rtb.model.AdCandidate;
 import com.rtb.model.BidResponse;
 import com.rtb.model.Campaign;
@@ -10,12 +11,13 @@ import com.rtb.pipeline.PipelineStage;
 import java.util.List;
 import java.util.UUID;
 
-/** Builds BidResponse from the winning candidate. */
+/** Builds BidResponse from the winning candidate and records the frequency impression. */
 public final class ResponseBuildStage implements PipelineStage {
 
     private final String baseUrl;
+    private final FrequencyCapper frequencyCapper;
 
-    public ResponseBuildStage(String baseUrl) {
+    public ResponseBuildStage(String baseUrl, FrequencyCapper frequencyCapper) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     }
 
@@ -50,6 +52,9 @@ public final class ResponseBuildStage implements PipelineStage {
         );
 
         ctx.setResponse(response);
+
+        // Record frequency only for the winner — not for all candidates
+        frequencyCapper.recordImpression(ctx.getRequest().userId(), campaign.id());
     }
 
     @Override

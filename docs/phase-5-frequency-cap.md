@@ -37,32 +37,30 @@ Key:    freq:{userId}:{campaignId}
 Type:   String (counter)
 TTL:    3600 seconds (1 hour window)
 
-Commands per candidate:
-  INCR freq:user_00042:camp-001    → returns current count
-  EXPIRE freq:user_00042:camp-001 3600  → set TTL on first INCR only
-```
+Check (FrequencyCapStage — read-only):
+  GET freq:user_00042:camp-001     → returns current count (or nil)
 
-INCR is atomic — no race condition between concurrent requests for the same user. EXPIRE is set only when `count == 1` (first impression in this window) to avoid resetting the TTL on every request.
+Record (ResponseBuildStage — winner only, Lua script for atomicity):
+  EVAL "INCR + EXPIRE if new" freq:user_00042:camp-001 3600
+```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `frequency/FrequencyCapper.java` | Interface — `isAllowed(userId, campaignId, maxImpressions)` |
-| `frequency/RedisFrequencyCapper.java` | Redis INCR + EXPIRE, 1-hour window |
-| `pipeline/stages/FrequencyCapStage.java` | Filters candidates, aborts if all capped |
+| `frequency/FrequencyCapper.java` | Interface — `isAllowed()` (read) + `recordImpression()` (write) |
+| `frequency/RedisFrequencyCapper.java` | GET for check, Lua script for atomic INCR+EXPIRE |
+| `pipeline/stages/FrequencyCapStage.java` | Read-only filter — does not increment counters |
 
 ## Design Decisions
 
-### INCR + EXPIRE, not SETEX or Lua script
+### Check vs Record — split to avoid overcounting
 
-`INCR` atomically increments and returns the new count in one round-trip. We set `EXPIRE` only on the first increment (`count == 1`) to avoid resetting the window. This is 1-2 Redis commands per candidate — simple and fast.
+FrequencyCapStage checks all candidates (read-only GET). ResponseBuildStage records only the winner (INCR). If we incremented on every check, we'd cap campaigns that were evaluated but never served — premature capping.
 
-A Lua script could combine INCR + EXPIRE into one atomic call, but adds complexity for minimal gain. At 50K QPS with 3 candidates per request, we'd be doing ~150K Redis INCR/s — well within Redis capacity (300K+ ops/s single-threaded).
+### Lua script for atomic INCR + EXPIRE
 
-### FrequencyCapStage increments on check, not on win
-
-The counter increments when we *bid*, not when we *win*. This means the count tracks bid attempts, not confirmed impressions. In production, you'd decrement on bid loss (via POST /win not arriving) or use a separate counter for confirmed impressions. For Phase 5, counting bids is the simpler and more conservative approach — it slightly undercounts allowed impressions but never overcounts.
+A bare INCR followed by EXPIRE is two commands — if the process crashes between them, the key loses its TTL and caps the user forever. The Lua script runs INCR + conditional EXPIRE atomically in one Redis round-trip.
 
 ### One Redis round-trip per candidate
 

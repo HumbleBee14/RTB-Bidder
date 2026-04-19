@@ -63,7 +63,7 @@ public final class Application {
                 new UserEnrichmentStage(userSegmentRepo),
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
                 new FrequencyCapStage(frequencyCapper),
-                new ResponseBuildStage(baseUrl)
+                new ResponseBuildStage(baseUrl, frequencyCapper)
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);
 
@@ -82,10 +82,18 @@ public final class Application {
                         server.actualPort(), pipelineConfig.maxLatencyMs(), stages.size()))
                 .onFailure(err -> {
                     logger.error("Failed to start RTB Bidder", err);
-                    frequencyCapper.close();
-                    userSegmentRepo.close();
+                    closeQuietly(frequencyCapper);
+                    closeQuietly(userSegmentRepo);
                     vertx.close();
                 });
+    }
+
+    private static void closeQuietly(AutoCloseable resource) {
+        try {
+            resource.close();
+        } catch (Exception e) {
+            logger.warn("Failed to close resource: {}", e.getMessage());
+        }
     }
 
     private static ObjectMapper createObjectMapper() {

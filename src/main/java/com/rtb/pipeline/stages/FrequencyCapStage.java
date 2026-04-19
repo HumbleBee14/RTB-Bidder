@@ -10,7 +10,7 @@ import com.rtb.pipeline.PipelineStage;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Filters out campaigns the user has seen too many times. */
+/** Filters out campaigns the user has seen too many times. Read-only check — does not increment. */
 public final class FrequencyCapStage implements PipelineStage {
 
     private final FrequencyCapper frequencyCapper;

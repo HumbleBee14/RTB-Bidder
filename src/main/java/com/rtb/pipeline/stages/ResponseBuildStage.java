@@ -31,12 +31,16 @@ public final class ResponseBuildStage implements PipelineStage {
         AdCandidate winner = candidates.get(0);
         ctx.setWinner(winner);
         Campaign campaign = winner.getCampaign();
+
+        // Bid at least the exchange's floor — bidding below is an automatic loss
+        double exchangeFloor = ctx.getRequest().adSlots().get(0).bidFloor();
+        double bidPrice = Math.max(campaign.bidFloor(), exchangeFloor);
         String bidId = UUID.randomUUID().toString();
 
         BidResponse response = new BidResponse(
                 bidId,
                 campaign.id(),
-                campaign.bidFloor(),
+                bidPrice,
                 campaign.creativeUrl(),
                 new BidResponse.TrackingUrls(
                         baseUrl + "/impression?bid_id=" + bidId,

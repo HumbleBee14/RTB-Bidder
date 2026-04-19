@@ -8,16 +8,20 @@ import com.rtb.config.PipelineConfig;
 import com.rtb.config.RedisConfig;
 import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
+import com.rtb.pipeline.stages.CandidateRetrievalStage;
 import com.rtb.pipeline.stages.RequestValidationStage;
 import com.rtb.pipeline.stages.ResponseBuildStage;
 import com.rtb.pipeline.stages.UserEnrichmentStage;
+import com.rtb.repository.CachedCampaignRepository;
+import com.rtb.repository.CampaignRepository;
 import com.rtb.repository.RedisUserSegmentRepository;
-import com.rtb.repository.UserSegmentRepository;
 import com.rtb.server.BidRequestHandler;
 import com.rtb.server.BidRouter;
 import com.rtb.server.HttpServer;
 import com.rtb.server.TrackingHandler;
 import com.rtb.server.WinHandler;
+import com.rtb.targeting.SegmentTargetingEngine;
+import com.rtb.targeting.TargetingEngine;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import org.slf4j.Logger;
@@ -40,13 +44,20 @@ public final class Application {
         PipelineConfig pipelineConfig = PipelineConfig.from(config);
         RedisConfig redisConfig = RedisConfig.from(config);
 
+        // Repositories
         RedisUserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(userSegmentRepo::close, "shutdown-redis"));
+
+        CampaignRepository campaignRepo = new CachedCampaignRepository(objectMapper, "campaigns.json");
+
+        // Targeting
+        TargetingEngine targetingEngine = new SegmentTargetingEngine();
 
         // Pipeline stages — executed in order
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
                 new UserEnrichmentStage(userSegmentRepo),
+                new CandidateRetrievalStage(campaignRepo, targetingEngine),
                 new ResponseBuildStage(baseUrl)
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);

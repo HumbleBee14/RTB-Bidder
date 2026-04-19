@@ -1,0 +1,102 @@
+[
+  {
+    "id": "camp-001",
+    "advertiser": "Nike",
+    "budget": 5000.00,
+    "bid_floor": 0.75,
+    "target_segments": ["sports", "fitness", "outdoor"],
+    "creative_url": "https://ads.example.com/creative/nike-run.html",
+    "advertiser_domain": "nike.com",
+    "max_impressions_per_hour": 5
+  },
+  {
+    "id": "camp-002",
+    "advertiser": "TechCorp",
+    "budget": 3000.00,
+    "bid_floor": 0.50,
+    "target_segments": ["tech", "gaming", "education"],
+    "creative_url": "https://ads.example.com/creative/techcorp-laptop.html",
+    "advertiser_domain": "techcorp.com",
+    "max_impressions_per_hour": 8
+  },
+  {
+    "id": "camp-003",
+    "advertiser": "TravelMax",
+    "budget": 8000.00,
+    "bid_floor": 1.20,
+    "target_segments": ["travel", "outdoor", "photography"],
+    "creative_url": "https://ads.example.com/creative/travelmax-deal.html",
+    "advertiser_domain": "travelmax.com",
+    "max_impressions_per_hour": 3
+  },
+  {
+    "id": "camp-004",
+    "advertiser": "FinanceHub",
+    "budget": 10000.00,
+    "bid_floor": 2.00,
+    "target_segments": ["finance", "high_income", "professional"],
+    "creative_url": "https://ads.example.com/creative/financehub-invest.html",
+    "advertiser_domain": "financehub.com",
+    "max_impressions_per_hour": 4
+  },
+  {
+    "id": "camp-005",
+    "advertiser": "GameZone",
+    "budget": 2000.00,
+    "bid_floor": 0.30,
+    "target_segments": ["gaming", "age_18_24", "evening_active"],
+    "creative_url": "https://ads.example.com/creative/gamezone-new.html",
+    "advertiser_domain": "gamezone.com",
+    "max_impressions_per_hour": 10
+  },
+  {
+    "id": "camp-006",
+    "advertiser": "FoodDelight",
+    "budget": 1500.00,
+    "bid_floor": 0.40,
+    "target_segments": ["food", "urban", "deal_seeker"],
+    "creative_url": "https://ads.example.com/creative/fooddelight-order.html",
+    "advertiser_domain": "fooddelight.com",
+    "max_impressions_per_hour": 6
+  },
+  {
+    "id": "camp-007",
+    "advertiser": "StyleCo",
+    "budget": 4000.00,
+    "bid_floor": 0.90,
+    "target_segments": ["fashion", "shopping", "female"],
+    "creative_url": "https://ads.example.com/creative/styleco-summer.html",
+    "advertiser_domain": "styleco.com",
+    "max_impressions_per_hour": 5
+  },
+  {
+    "id": "camp-008",
+    "advertiser": "HealthPlus",
+    "budget": 6000.00,
+    "bid_floor": 0.60,
+    "target_segments": ["health", "fitness", "age_25_34"],
+    "creative_url": "https://ads.example.com/creative/healthplus-app.html",
+    "advertiser_domain": "healthplus.com",
+    "max_impressions_per_hour": 7
+  },
+  {
+    "id": "camp-009",
+    "advertiser": "AutoDrive",
+    "budget": 7000.00,
+    "bid_floor": 1.50,
+    "target_segments": ["auto", "high_income", "suburban"],
+    "creative_url": "https://ads.example.com/creative/autodrive-suv.html",
+    "advertiser_domain": "autodrive.com",
+    "max_impressions_per_hour": 4
+  },
+  {
+    "id": "camp-010",
+    "advertiser": "EduLearn",
+    "budget": 1000.00,
+    "bid_floor": 0.25,
+    "target_segments": ["education", "student", "age_18_24"],
+    "creative_url": "https://ads.example.com/creative/edulearn-course.html",
+    "advertiser_domain": "edulearn.com",
+    "max_impressions_per_hour": 12
+  }
+]

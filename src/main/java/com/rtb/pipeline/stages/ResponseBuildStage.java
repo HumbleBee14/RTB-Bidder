@@ -1,13 +1,16 @@
 package com.rtb.pipeline.stages;
 
-import com.rtb.model.BidRequest;
+import com.rtb.model.AdCandidate;
 import com.rtb.model.BidResponse;
+import com.rtb.model.Campaign;
+import com.rtb.model.NoBidReason;
 import com.rtb.pipeline.BidContext;
 import com.rtb.pipeline.PipelineStage;
 
+import java.util.List;
 import java.util.UUID;
 
-/** Builds BidResponse from the pipeline context. */
+/** Builds BidResponse from the winning candidate. */
 public final class ResponseBuildStage implements PipelineStage {
 
     private final String baseUrl;
@@ -18,21 +21,28 @@ public final class ResponseBuildStage implements PipelineStage {
 
     @Override
     public void process(BidContext ctx) {
-        BidRequest request = ctx.getRequest();
-        // TODO: build from winning candidate once targeting/scoring is wired (Phase 4-6)
-        BidRequest.AdSlot firstSlot = request.adSlots().get(0);
+        // Pick first candidate as winner — proper ranking in Phase 6
+        List<AdCandidate> candidates = ctx.getCandidates();
+        if (candidates == null || candidates.isEmpty()) {
+            ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
+            return;
+        }
+
+        AdCandidate winner = candidates.get(0);
+        ctx.setWinner(winner);
+        Campaign campaign = winner.getCampaign();
         String bidId = UUID.randomUUID().toString();
 
         BidResponse response = new BidResponse(
                 bidId,
-                "ad-001",
-                firstSlot.bidFloor() + 0.10,
-                "https://ads.example.com/creative/ad-001.html",
+                campaign.id(),
+                campaign.bidFloor(),
+                campaign.creativeUrl(),
                 new BidResponse.TrackingUrls(
                         baseUrl + "/impression?bid_id=" + bidId,
                         baseUrl + "/click?bid_id=" + bidId
                 ),
-                "example.com"
+                campaign.advertiserDomain()
         );
 
         ctx.setResponse(response);

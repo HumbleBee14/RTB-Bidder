@@ -26,12 +26,12 @@ Feature-weighted scoring engine, per-slot ranking with creative size matching, b
   │       ▼                                                         │
   │  RankingStage (per-slot — size match, floor filter, dedup)      │
   │       │  slot-top (728x90, floor $0.50):                        │
-  │       │    HealthPlus has 728x90, $0.60 ≥ $0.50 → WINNER       │
+  │       │    HealthPlus has 728x90, $0.60 ≥ $0.50 → WINNER        │
   │       │  slot-mid (300x250, floor $0.30):                       │
   │       │    HealthPlus already won → skip (dedup)                │
-  │       │    FoodDelight has 300x250, $0.40 ≥ $0.30 → WINNER     │
+  │       │    FoodDelight has 300x250, $0.40 ≥ $0.30 → WINNER      │
   │       │  slot-sidebar (160x600, floor $0.20):                   │
-  │       │    EduLearn has 160x600, $0.25 ≥ $0.20 → WINNER        │
+  │       │    EduLearn has 160x600, $0.25 ≥ $0.20 → WINNER         │
   │       ▼                                                         │
   │  ResponseBuildStage (per-slot — builds SlotBid per winner)      │
   │                                                                 │

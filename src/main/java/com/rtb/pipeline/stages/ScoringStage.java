@@ -33,6 +33,6 @@ public final class ScoringStage implements PipelineStage {
 
     @Override
     public String name() {
-        return "Scoring";
+        return "Scoring(" + scorer.name() + ")";
     }
 }

@@ -8,7 +8,8 @@
     "creative_sizes": ["300x250", "728x90"],
     "creative_url": "https://ads.example.com/creative/nike-run.html",
     "advertiser_domain": "nike.com",
-    "max_impressions_per_hour": 5
+    "max_impressions_per_hour": 5,
+    "value_per_click": 2.50
   },
   {
     "id": "camp-002",
@@ -19,7 +20,8 @@
     "creative_sizes": ["300x250", "160x600"],
     "creative_url": "https://ads.example.com/creative/techcorp-laptop.html",
     "advertiser_domain": "techcorp.com",
-    "max_impressions_per_hour": 8
+    "max_impressions_per_hour": 8,
+    "value_per_click": 1.80
   },
   {
     "id": "camp-003",
@@ -30,7 +32,8 @@
     "creative_sizes": ["728x90", "300x250", "160x600"],
     "creative_url": "https://ads.example.com/creative/travelmax-deal.html",
     "advertiser_domain": "travelmax.com",
-    "max_impressions_per_hour": 3
+    "max_impressions_per_hour": 3,
+    "value_per_click": 4.00
   },
   {
     "id": "camp-004",
@@ -41,7 +44,8 @@
     "creative_sizes": ["300x250", "728x90"],
     "creative_url": "https://ads.example.com/creative/financehub-invest.html",
     "advertiser_domain": "financehub.com",
-    "max_impressions_per_hour": 4
+    "max_impressions_per_hour": 4,
+    "value_per_click": 8.00
   },
   {
     "id": "camp-005",
@@ -52,7 +56,8 @@
     "creative_sizes": ["300x250", "160x600"],
     "creative_url": "https://ads.example.com/creative/gamezone-new.html",
     "advertiser_domain": "gamezone.com",
-    "max_impressions_per_hour": 10
+    "max_impressions_per_hour": 10,
+    "value_per_click": 1.20
   },
   {
     "id": "camp-006",
@@ -63,7 +68,8 @@
     "creative_sizes": ["300x250", "728x90"],
     "creative_url": "https://ads.example.com/creative/fooddelight-order.html",
     "advertiser_domain": "fooddelight.com",
-    "max_impressions_per_hour": 6
+    "max_impressions_per_hour": 6,
+    "value_per_click": 1.50
   },
   {
     "id": "camp-007",
@@ -74,7 +80,8 @@
     "creative_sizes": ["160x600", "300x250"],
     "creative_url": "https://ads.example.com/creative/styleco-summer.html",
     "advertiser_domain": "styleco.com",
-    "max_impressions_per_hour": 5
+    "max_impressions_per_hour": 5,
+    "value_per_click": 3.00
   },
   {
     "id": "camp-008",
@@ -85,7 +92,8 @@
     "creative_sizes": ["300x250", "728x90", "160x600"],
     "creative_url": "https://ads.example.com/creative/healthplus-app.html",
     "advertiser_domain": "healthplus.com",
-    "max_impressions_per_hour": 7
+    "max_impressions_per_hour": 7,
+    "value_per_click": 2.00
   },
   {
     "id": "camp-009",
@@ -96,7 +104,8 @@
     "creative_sizes": ["728x90", "300x250"],
     "creative_url": "https://ads.example.com/creative/autodrive-suv.html",
     "advertiser_domain": "autodrive.com",
-    "max_impressions_per_hour": 4
+    "max_impressions_per_hour": 4,
+    "value_per_click": 5.00
   },
   {
     "id": "camp-010",
@@ -107,6 +116,7 @@
     "creative_sizes": ["300x250", "160x600"],
     "creative_url": "https://ads.example.com/creative/edulearn-course.html",
     "advertiser_domain": "edulearn.com",
-    "max_impressions_per_hour": 12
+    "max_impressions_per_hour": 12,
+    "value_per_click": 0.80
   }
 ]

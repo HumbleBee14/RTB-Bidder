@@ -18,17 +18,16 @@ import java.util.Set;
 
 /**
  * ML-based scorer using ONNX Runtime for pCTR prediction.
- * Score = pCTR × valuePerClick × pacingFactor
+ * Score = pCTR × valuePerClick
  *
- * Feature vector (65 floats):
- *   [0-49]  user segments (one-hot)
- *   [50-59] app category (one-hot)
- *   [60-62] device type (one-hot)
- *   [63]    hour of day (normalized 0-1)
- *   [64]    campaign bid floor
+ * Feature vector (66 floats):
+ *   [0-50]  user segments (one-hot, 51 segments)
+ *   [51-60] app category (one-hot, 10 categories)
+ *   [61-63] device type (one-hot, 3 types)
+ *   [64]    hour of day (normalized 0-1)
+ *   [65]    campaign bid floor
  *
- * Thread-safety: OrtSession.run() is NOT thread-safe. We synchronize on the session.
- * For higher throughput, use a session pool (one per thread).
+ * Thread-safety: OrtSession.run() is NOT thread-safe. Synchronized on session.
  */
 public final class MLScorer implements Scorer, AutoCloseable {
 
@@ -64,9 +63,10 @@ public final class MLScorer implements Scorer, AutoCloseable {
     public MLScorer(String modelPath) {
         try {
             this.env = OrtEnvironment.getEnvironment();
-            OrtSession.SessionOptions opts = new OrtSession.SessionOptions();
-            opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
-            this.session = env.createSession(modelPath, opts);
+            try (OrtSession.SessionOptions opts = new OrtSession.SessionOptions()) {
+                opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+                this.session = env.createSession(modelPath, opts);
+            }
             logger.info("Loaded ONNX model: {} (features: {})", modelPath, NUM_FEATURES);
         } catch (OrtException e) {
             throw new RuntimeException("Failed to load ONNX model: " + modelPath, e);
@@ -83,12 +83,12 @@ public final class MLScorer implements Scorer, AutoCloseable {
     private float predict(float[] features) {
         try {
             long[] shape = {1, NUM_FEATURES};
-            OnnxTensor input = OnnxTensor.createTensor(env, FloatBuffer.wrap(features), shape);
-            // Output index 1 = probabilities [batch, n_classes], class 1 = click probability
-            synchronized (session) {
-                try (var results = session.run(Map.of("features", input))) {
-                    float[][] probs = (float[][]) results.get(1).getValue();
-                    return probs[0][1]; // P(click)
+            try (OnnxTensor input = OnnxTensor.createTensor(env, FloatBuffer.wrap(features), shape)) {
+                synchronized (session) {
+                    try (var results = session.run(Map.of("features", input))) {
+                        float[][] probs = (float[][]) results.get(1).getValue();
+                        return probs[0][1]; // P(click)
+                    }
                 }
             }
         } catch (OrtException e) {
@@ -100,7 +100,6 @@ public final class MLScorer implements Scorer, AutoCloseable {
     private float[] buildFeatureVector(Campaign campaign, UserProfile user, AdContext context) {
         float[] features = new float[NUM_FEATURES];
 
-        // Segment features (one-hot)
         Set<String> userSegments = user.segments();
         for (int i = 0; i < SEGMENTS.size(); i++) {
             if (userSegments.contains(SEGMENTS.get(i))) {
@@ -108,7 +107,6 @@ public final class MLScorer implements Scorer, AutoCloseable {
             }
         }
 
-        // App category (one-hot)
         if (context.appCategory() != null) {
             int appIdx = APP_CATEGORIES.indexOf(context.appCategory());
             if (appIdx >= 0) {
@@ -116,7 +114,6 @@ public final class MLScorer implements Scorer, AutoCloseable {
             }
         }
 
-        // Device type (one-hot)
         if (context.deviceType() != null) {
             int deviceIdx = DEVICE_TYPES.indexOf(context.deviceType());
             if (deviceIdx >= 0) {
@@ -124,10 +121,7 @@ public final class MLScorer implements Scorer, AutoCloseable {
             }
         }
 
-        // Hour of day (normalized)
         features[NUM_FEATURES - 2] = LocalTime.now().getHour() / 23.0f;
-
-        // Campaign bid floor
         features[NUM_FEATURES - 1] = (float) campaign.bidFloor();
 
         return features;

@@ -62,15 +62,15 @@ MLScorer:               score = pCTR × valuePerClick
 
 MLScorer's score represents expected revenue per click: "what's the probability this user clicks this ad, times how much each click is worth." This is how real ad auctions work — bid = pCTR × value.
 
-## Feature Vector (65 floats)
+## Feature Vector (66 floats)
 
 ```
 Index    Feature                    Type
-[0-49]   user segments              one-hot (50 segments)
-[50-59]  app category               one-hot (10 categories)
-[60-62]  device type                one-hot (mobile/desktop/tablet)
-[63]     hour of day                normalized (0.0 - 1.0)
-[64]     campaign bid floor         float
+[0-50]   user segments              one-hot (51 segments)
+[51-60]  app category               one-hot (10 categories)
+[61-63]  device type                one-hot (mobile/desktop/tablet)
+[64]     hour of day                normalized (0.0 - 1.0)
+[65]     campaign bid floor         float
 ```
 
 All features are pre-computed — UserProfile segments already fetched from Redis, AdContext already parsed from request. The feature vector is assembled from existing pipeline data, no additional I/O.
@@ -119,7 +119,7 @@ ABTestScorer splits traffic deterministically by user_id hash:
 | File | Purpose |
 |------|---------|
 | `ml/train_pctr_model.py` | Python: generate data, train XGBoost, export ONNX |
-| `ml/pctr_model.onnx` | Trained model artifact (65 features → pCTR) |
+| `ml/pctr_model.onnx` | Trained model artifact (66 features → pCTR) |
 | `ml/feature_spec.txt` | Feature ordering metadata |
 | `scoring/MLScorer.java` | ONNX Runtime inference, feature vector assembly |
 | `scoring/ABTestScorer.java` | Deterministic A/B split between two scorers |

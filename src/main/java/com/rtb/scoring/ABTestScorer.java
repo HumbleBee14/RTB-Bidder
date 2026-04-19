@@ -38,7 +38,7 @@ public final class ABTestScorer implements Scorer {
 
     /** Deterministic assignment based on user_id hash — same user always gets same variant. */
     private boolean isInTreatmentGroup(String userId) {
-        int bucket = Math.abs(userId.hashCode() % 100);
+        int bucket = (userId.hashCode() & 0x7fffffff) % 100;
         return bucket < treatmentPercentage;
     }
 }

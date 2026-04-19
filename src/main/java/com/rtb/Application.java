@@ -60,6 +60,9 @@ public final class Application {
 
         TargetingEngine targetingEngine = new SegmentTargetingEngine();
         Scorer scorer = createScorer(config);
+        if (scorer instanceof AutoCloseable closeableScorer) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeableScorer), "shutdown-scorer"));
+        }
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
 

@@ -11,8 +11,12 @@ import com.rtb.pipeline.PipelineStage;
 import com.rtb.frequency.RedisFrequencyCapper;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
 import com.rtb.pipeline.stages.FrequencyCapStage;
+import com.rtb.pipeline.stages.RankingStage;
 import com.rtb.pipeline.stages.RequestValidationStage;
 import com.rtb.pipeline.stages.ResponseBuildStage;
+import com.rtb.pipeline.stages.ScoringStage;
+import com.rtb.scoring.FeatureWeightedScorer;
+import com.rtb.scoring.Scorer;
 import com.rtb.pipeline.stages.UserEnrichmentStage;
 import com.rtb.repository.CachedCampaignRepository;
 import com.rtb.repository.CampaignRepository;
@@ -52,8 +56,8 @@ public final class Application {
 
         CampaignRepository campaignRepo = new CachedCampaignRepository(objectMapper, "campaigns.json");
 
-        // Targeting + frequency capping
         TargetingEngine targetingEngine = new SegmentTargetingEngine();
+        Scorer scorer = new FeatureWeightedScorer();
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
 
@@ -63,6 +67,8 @@ public final class Application {
                 new UserEnrichmentStage(userSegmentRepo),
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
                 new FrequencyCapStage(frequencyCapper),
+                new ScoringStage(scorer),
+                new RankingStage(),
                 new ResponseBuildStage(baseUrl)
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);

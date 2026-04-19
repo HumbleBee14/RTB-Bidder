@@ -7,10 +7,9 @@ import com.rtb.model.NoBidReason;
 import com.rtb.pipeline.BidContext;
 import com.rtb.pipeline.PipelineStage;
 
-import java.util.List;
 import java.util.UUID;
 
-/** Builds BidResponse from the winning candidate. */
+/** Builds BidResponse from the winner selected by RankingStage. */
 public final class ResponseBuildStage implements PipelineStage {
 
     private final String baseUrl;
@@ -21,17 +20,13 @@ public final class ResponseBuildStage implements PipelineStage {
 
     @Override
     public void process(BidContext ctx) {
-        List<AdCandidate> candidates = ctx.getCandidates();
-        if (candidates == null || candidates.isEmpty()) {
+        AdCandidate winner = ctx.getWinner();
+        if (winner == null) {
             ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
             return;
         }
 
-        // Pick first candidate — proper ranking in Phase 6
-        AdCandidate winner = candidates.get(0);
-        ctx.setWinner(winner);
         Campaign campaign = winner.getCampaign();
-
         double exchangeFloor = ctx.getRequest().adSlots().get(0).bidFloor();
         double bidPrice = Math.max(campaign.bidFloor(), exchangeFloor);
         String bidId = UUID.randomUUID().toString();

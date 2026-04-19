@@ -19,6 +19,7 @@ public final class ResponseBuildStage implements PipelineStage {
 
     public ResponseBuildStage(String baseUrl, FrequencyCapper frequencyCapper) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        this.frequencyCapper = frequencyCapper;
     }
 
     @Override

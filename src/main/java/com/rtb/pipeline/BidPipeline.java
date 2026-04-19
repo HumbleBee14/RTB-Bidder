@@ -15,15 +15,15 @@ public final class BidPipeline {
     private static final Logger logger = LoggerFactory.getLogger(BidPipeline.class);
 
     private final List<PipelineStage> stages;
-    private final long deadlineNanos;
+    private final long slaBudgetNanos;
 
     public BidPipeline(List<PipelineStage> stages, PipelineConfig config) {
         this.stages = List.copyOf(stages);
-        this.deadlineNanos = TimeUnit.MILLISECONDS.toNanos(config.maxLatencyMs());
+        this.slaBudgetNanos = TimeUnit.MILLISECONDS.toNanos(config.maxLatencyMs());
     }
 
     public BidContext execute(BidRequest request, long startNanos) {
-        BidContext ctx = new BidContext(request, startNanos, startNanos + deadlineNanos);
+        BidContext ctx = new BidContext(request, startNanos, startNanos + slaBudgetNanos);
         StringBuilder timing = logger.isInfoEnabled() ? new StringBuilder() : null;
 
         for (PipelineStage stage : stages) {
@@ -72,7 +72,7 @@ public final class BidPipeline {
             logger.info("Pipeline: [{}] total={}ms deadline={}ms bid={}",
                     timing,
                     totalMicros / 1000 + "." + String.valueOf(totalMicros % 1000 + 1000).substring(1),
-                    TimeUnit.NANOSECONDS.toMillis(this.deadlineNanos),
+                    TimeUnit.NANOSECONDS.toMillis(this.slaBudgetNanos),
                     !ctx.isAborted());
         }
 

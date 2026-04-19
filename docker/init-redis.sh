@@ -1,7 +1,7 @@
 #!/bin/bash
 # Seed Redis with 10K users, each with 3-8 random segments.
-# Usage: docker exec -i redis redis-cli < docker/init-redis.sh
-#    or: redis-cli < docker/init-redis.sh
+# Usage: bash docker/init-redis.sh | docker exec -i <redis-container> redis-cli
+#    or: bash docker/init-redis.sh | redis-cli
 
 SEGMENTS=(
   "sports" "tech" "travel" "finance" "gaming" "music" "food" "fashion"

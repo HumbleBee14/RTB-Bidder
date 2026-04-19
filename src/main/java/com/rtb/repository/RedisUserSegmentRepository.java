@@ -2,11 +2,13 @@ package com.rtb.repository;
 
 import com.rtb.config.RedisConfig;
 import io.lettuce.core.RedisClient;
+import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.Collections;
 import java.util.Set;
 
@@ -20,11 +22,15 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
     private final RedisCommands<String, String> commands;
 
     public RedisUserSegmentRepository(RedisConfig config) {
-        this.client = RedisClient.create(config.uri());
+        RedisURI uri = RedisURI.create(config.uri());
+        uri.setTimeout(Duration.ofMillis(config.timeoutMs()));
+
+        this.client = RedisClient.create(uri);
         this.connection = client.connect();
         this.commands = connection.sync();
-        // Lettuce sync commands are thread-safe on a single connection
-        logger.info("Connected to Redis: {}", config.uri());
+        connection.setTimeout(Duration.ofMillis(config.timeoutMs()));
+
+        logger.info("Connected to Redis: {}:{}", uri.getHost(), uri.getPort());
     }
 
     @Override

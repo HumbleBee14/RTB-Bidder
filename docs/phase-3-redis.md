@@ -2,7 +2,7 @@
 
 ## What was built
 
-Redis integration via Lettuce async client. User segments stored as Redis Sets, fetched by UserEnrichmentStage in the pipeline. Docker Compose for infrastructure.
+Redis integration via Lettuce sync commands. User segments stored as Redis Sets, fetched by UserEnrichmentStage in the pipeline. Docker Compose for infrastructure.
 
 ## Request Flow (Phase 3)
 
@@ -81,7 +81,7 @@ curl -X POST http://localhost:8080/bid -H "Content-Type: application/json" ^
   -d "{\"user_id\":\"user_00042\",\"app\":{\"id\":\"app1\"},\"ad_slots\":[{\"id\":\"slot1\",\"sizes\":[\"300x250\"],\"bid_floor\":0.50}]}"
 ```
 
-Watch logs for: `UserEnrichment: 0.xxms` and the fetched segments.
+Watch logs for `UserEnrichment` stage timing in the pipeline summary line.
 
 ## Design Decisions
 

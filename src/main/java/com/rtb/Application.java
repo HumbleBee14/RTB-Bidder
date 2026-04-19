@@ -40,8 +40,8 @@ public final class Application {
         PipelineConfig pipelineConfig = PipelineConfig.from(config);
         RedisConfig redisConfig = RedisConfig.from(config);
 
-        // Repositories
-        UserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(redisConfig);
+        RedisUserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(redisConfig);
+        Runtime.getRuntime().addShutdownHook(new Thread(userSegmentRepo::close, "shutdown-redis"));
 
         // Pipeline stages — executed in order
         List<PipelineStage> stages = List.of(
@@ -66,6 +66,7 @@ public final class Application {
                         server.actualPort(), pipelineConfig.maxLatencyMs(), stages.size()))
                 .onFailure(err -> {
                     logger.error("Failed to start RTB Bidder", err);
+                    userSegmentRepo.close();
                     vertx.close();
                 });
     }

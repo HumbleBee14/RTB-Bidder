@@ -2,6 +2,7 @@ package com.rtb.pipeline.stages;
 
 import com.rtb.model.UserProfile;
 import com.rtb.pipeline.BidContext;
+import com.rtb.pipeline.PipelineException;
 import com.rtb.pipeline.PipelineStage;
 import com.rtb.repository.UserSegmentRepository;
 
@@ -19,8 +20,12 @@ public final class UserEnrichmentStage implements PipelineStage {
     @Override
     public void process(BidContext ctx) {
         String userId = ctx.getRequest().userId();
-        Set<String> segments = repository.getSegments(userId);
-        ctx.setUserProfile(new UserProfile(userId, segments));
+        try {
+            Set<String> segments = repository.getSegments(userId);
+            ctx.setUserProfile(new UserProfile(userId, segments));
+        } catch (Exception e) {
+            throw new PipelineException("Redis lookup failed for user: " + userId, e);
+        }
     }
 
     @Override

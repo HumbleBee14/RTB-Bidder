@@ -24,7 +24,7 @@ public final class ScoringStage implements PipelineStage {
         double exchangeFloor = ctx.getRequest().adSlots().get(0).bidFloor();
         AdContext adContext = AdContext.from(ctx.getRequest());
         List<AdCandidate> candidates = ctx.getCandidates();
-        List<AdCandidate> eligible = new ArrayList<>();
+        List<AdCandidate> eligible = new ArrayList<>(candidates.size());
 
         for (AdCandidate candidate : candidates) {
             double score = scorer.score(candidate.getCampaign(), ctx.getUserProfile(), adContext);

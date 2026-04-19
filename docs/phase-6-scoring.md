@@ -22,9 +22,9 @@ Feature-weighted scoring engine, bid floor enforcement, and ranking stage. The p
   │  ScoringStage ◄── FeatureWeightedScorer                        │
   │       │  Nike:        1/3 overlap × $0.75 = 0.25               │
   │       │  GameZone:    1/3 overlap × $0.30 = 0.10               │
-  │       │  HealthPlus:  2/3 overlap × $0.60 = 0.40  ← highest   │
+  │       │  HealthPlus:  2/3 overlap × $0.60 = 0.40  ← highest    │
   │       │                                                        │
-  │       │  filter: campaign.bidFloor < exchange.bidFloor? → skip  │
+  │       │  filter: campaign.bidFloor < exchange.bidFloor? → skip │
   │       ▼                                                        │
   │  RankingStage                                                  │
   │       │  sort by score desc → pick HealthPlus (0.40)           │

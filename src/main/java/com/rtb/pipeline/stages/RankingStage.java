@@ -7,7 +7,7 @@ import com.rtb.pipeline.PipelineStage;
 
 import java.util.List;
 
-/** Sorts candidates by score descending and picks the top-1 winner. */
+/** Picks the highest-scoring candidate as the winner (O(n) max-scan). */
 public final class RankingStage implements PipelineStage {
 
     @Override

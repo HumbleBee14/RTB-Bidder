@@ -2,6 +2,7 @@ package com.rtb.server;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rtb.frequency.FrequencyCapper;
+import com.rtb.model.AdCandidate;
 import com.rtb.model.BidRequest;
 import com.rtb.model.NoBidReason;
 import com.rtb.pipeline.BidContext;
@@ -57,9 +58,9 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
                     .setStatusCode(200)
                     .end(responseJson);
 
-            // Record frequency AFTER response is sent — only counts confirmed bids
-            if (bidCtx.getWinner() != null) {
-                frequencyCapper.recordImpression(request.userId(), bidCtx.getWinner().getCampaign().id());
+            // Record frequency for ALL slot winners — after response is sent
+            for (AdCandidate winner : bidCtx.getSlotWinners().values()) {
+                frequencyCapper.recordImpression(request.userId(), winner.getCampaign().id());
             }
 
         } catch (Exception e) {

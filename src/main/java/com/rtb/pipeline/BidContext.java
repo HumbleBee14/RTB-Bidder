@@ -6,7 +6,9 @@ import com.rtb.model.BidResponse;
 import com.rtb.model.NoBidReason;
 import com.rtb.model.UserProfile;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Mutable context that flows through the pipeline.
@@ -19,9 +21,8 @@ public class BidContext {
     private final long deadlineNanos;
 
     private UserProfile userProfile;
-    private BidRequest.AdSlot selectedSlot;
     private List<AdCandidate> candidates;
-    private AdCandidate winner;
+    private Map<BidRequest.AdSlot, AdCandidate> slotWinners;
     private BidResponse response;
     private NoBidReason noBidReason;
 
@@ -29,6 +30,7 @@ public class BidContext {
         this.request = request;
         this.startTimeNanos = startTimeNanos;
         this.deadlineNanos = deadlineNanos;
+        this.slotWinners = new LinkedHashMap<>();
     }
 
     public BidRequest getRequest() {
@@ -55,14 +57,6 @@ public class BidContext {
         this.userProfile = userProfile;
     }
 
-    public BidRequest.AdSlot getSelectedSlot() {
-        return selectedSlot;
-    }
-
-    public void setSelectedSlot(BidRequest.AdSlot selectedSlot) {
-        this.selectedSlot = selectedSlot;
-    }
-
     public List<AdCandidate> getCandidates() {
         return candidates;
     }
@@ -71,12 +65,17 @@ public class BidContext {
         this.candidates = candidates;
     }
 
-    public AdCandidate getWinner() {
-        return winner;
+    public Map<BidRequest.AdSlot, AdCandidate> getSlotWinners() {
+        return slotWinners;
     }
 
-    public void setWinner(AdCandidate winner) {
-        this.winner = winner;
+    public void setSlotWinner(BidRequest.AdSlot slot, AdCandidate winner) {
+        this.slotWinners.put(slot, winner);
+    }
+
+    /** Convenience — returns the first winner (for frequency recording in handler). */
+    public AdCandidate getWinner() {
+        return slotWinners.isEmpty() ? null : slotWinners.values().iterator().next();
     }
 
     public void setResponse(BidResponse response) {
@@ -87,7 +86,6 @@ public class BidContext {
         return noBidReason;
     }
 
-    /** Abort the pipeline — no-bid with the given reason. */
     public void abort(NoBidReason reason) {
         this.noBidReason = reason;
     }

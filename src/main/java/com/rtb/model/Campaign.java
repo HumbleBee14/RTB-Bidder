@@ -9,7 +9,18 @@ public record Campaign(
         double budget,
         double bidFloor,
         Set<String> targetSegments,
+        Set<String> creativeSizes,
         String creativeUrl,
         String advertiserDomain,
         int maxImpressionsPerHour
-) {}
+) {
+    /** Check if this campaign has a creative that fits the given slot sizes. */
+    public boolean fitsSlot(java.util.List<String> slotSizes) {
+        for (String size : slotSizes) {
+            if (creativeSizes.contains(size)) {
+                return true;
+            }
+        }
+        return false;
+    }
+}

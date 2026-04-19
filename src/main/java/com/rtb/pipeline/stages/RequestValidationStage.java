@@ -22,11 +22,6 @@ public final class RequestValidationStage implements PipelineStage {
             return;
         }
 
-        // TODO: multi-slot support — requires per-slot scoring, creative size matching, top-K ranking
-        if (request.adSlots().size() > 1) {
-            ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
-            return;
-        }
 
         for (BidRequest.AdSlot slot : request.adSlots()) {
             if (slot.id() == null || slot.id().isBlank()) {

@@ -19,6 +19,7 @@ public class BidContext {
     private final long deadlineNanos;
 
     private UserProfile userProfile;
+    private BidRequest.AdSlot selectedSlot;
     private List<AdCandidate> candidates;
     private AdCandidate winner;
     private BidResponse response;
@@ -52,6 +53,14 @@ public class BidContext {
 
     public void setUserProfile(UserProfile userProfile) {
         this.userProfile = userProfile;
+    }
+
+    public BidRequest.AdSlot getSelectedSlot() {
+        return selectedSlot;
+    }
+
+    public void setSelectedSlot(BidRequest.AdSlot selectedSlot) {
+        this.selectedSlot = selectedSlot;
     }
 
     public List<AdCandidate> getCandidates() {

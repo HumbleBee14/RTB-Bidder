@@ -2,6 +2,7 @@ package com.rtb.pipeline.stages;
 
 import com.rtb.model.AdCandidate;
 import com.rtb.model.AdContext;
+import com.rtb.model.BidRequest;
 import com.rtb.model.NoBidReason;
 import com.rtb.pipeline.BidContext;
 import com.rtb.pipeline.PipelineStage;
@@ -21,7 +22,10 @@ public final class ScoringStage implements PipelineStage {
 
     @Override
     public void process(BidContext ctx) {
-        double exchangeFloor = ctx.getRequest().adSlots().get(0).bidFloor();
+        BidRequest.AdSlot bestSlot = selectBestSlot(ctx.getRequest().adSlots());
+        ctx.setSelectedSlot(bestSlot);
+
+        double exchangeFloor = bestSlot.bidFloor();
         AdContext adContext = AdContext.from(ctx.getRequest());
         List<AdCandidate> candidates = ctx.getCandidates();
         List<AdCandidate> eligible = new ArrayList<>(candidates.size());
@@ -30,7 +34,6 @@ public final class ScoringStage implements PipelineStage {
             double score = scorer.score(candidate.getCampaign(), ctx.getUserProfile(), adContext);
             candidate.setScore(score);
 
-            // Filter: campaign can't afford this slot
             if (candidate.getCampaign().bidFloor() >= exchangeFloor) {
                 eligible.add(candidate);
             }
@@ -42,6 +45,17 @@ public final class ScoringStage implements PipelineStage {
         }
 
         ctx.setCandidates(eligible);
+    }
+
+    /** Pick the slot with the lowest bid floor — best chance of winning. */
+    private BidRequest.AdSlot selectBestSlot(List<BidRequest.AdSlot> slots) {
+        BidRequest.AdSlot best = slots.get(0);
+        for (int i = 1; i < slots.size(); i++) {
+            if (slots.get(i).bidFloor() < best.bidFloor()) {
+                best = slots.get(i);
+            }
+        }
+        return best;
     }
 
     @Override

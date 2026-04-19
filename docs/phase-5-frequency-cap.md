@@ -66,22 +66,48 @@ A bare INCR followed by EXPIRE is two commands — if the process crashes betwee
 
 With 3-5 candidates, that's 3-5 sequential Redis calls. At ~0.5ms per call, that's 1.5-2.5ms — significant in a 50ms SLA budget. Phase 10 (resilience) adds batching via Redis pipelining to reduce this to 1 round-trip regardless of candidate count.
 
+## End-to-End Test Results (Phases 1-5)
+
+All stages running with real Redis — tested and verified:
+
+```
+Pipeline: [RequestValidation: 0.009ms, UserEnrichment: 3.019ms, CandidateRetrieval: 0.047ms,
+           FrequencyCap: 13.197ms, ResponseBuild: 12.568ms] total=29.416ms deadline=50ms bid=true
+```
+
+| Test | Result |
+|------|--------|
+| user_00042 (fitness segment) | 200 — Nike camp-001, $0.75 |
+| user_00001 (shopping, age_18_24) | 200 — GameZone camp-005, $0.50 |
+| Unknown user (no segments) | 204 NO_MATCHING_CAMPAIGN |
+| Missing user_id | 204 NO_MATCHING_CAMPAIGN |
+| Empty ad_slots | 204 NO_MATCHING_CAMPAIGN |
+| Negative bid_floor | 204 NO_MATCHING_CAMPAIGN |
+| Exchange floor $2.00 > campaign $0.75 | 200 — price: $2.00 (bid floor enforced) |
+| Win notification | 200 acknowledged |
+| Impression pixel | 200 (1x1 GIF) |
+| Click tracking | 200 click_tracked |
+
+Different users get different ads based on their segments. Bid floor enforcement works. No-bid flows work for all validation failures.
+
 ## How to test
 
 ```bash
-# Start Redis and seed users
 docker compose up -d redis
-bash docker/init-redis.sh | docker exec -i <container> redis-cli
+bash docker/init-redis.sh | docker exec -i java-rtb-bidder-redis-1 redis-cli
 
 mvnw.cmd package
 java -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
 
-# Hit same user 6 times — campaign with max_impressions=5 should get capped
+# Different users → different ads
+curl -s -X POST http://localhost:8080/bid -H "Content-Type: application/json" \
+  -d "{\"user_id\":\"user_00042\",\"app\":{\"id\":\"app1\"},\"ad_slots\":[{\"id\":\"slot1\",\"sizes\":[\"300x250\"],\"bid_floor\":0.50}]}"
+
+# Frequency cap test — hit same user repeatedly
 for i in 1 2 3 4 5 6; do
   echo "=== Request $i ==="
   curl -s -X POST http://localhost:8080/bid -H "Content-Type: application/json" \
     -d "{\"user_id\":\"user_00042\",\"app\":{\"id\":\"app1\"},\"ad_slots\":[{\"id\":\"slot1\",\"sizes\":[\"300x250\"],\"bid_floor\":0.50}]}"
   echo
 done
-# After max_impressions hits: different campaign or 204 ALL_FREQUENCY_CAPPED
 ```

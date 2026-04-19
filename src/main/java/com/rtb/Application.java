@@ -5,10 +5,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.rtb.config.AppConfig;
 import com.rtb.config.PipelineConfig;
+import com.rtb.config.RedisConfig;
 import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
 import com.rtb.pipeline.stages.RequestValidationStage;
 import com.rtb.pipeline.stages.ResponseBuildStage;
+import com.rtb.pipeline.stages.UserEnrichmentStage;
+import com.rtb.repository.RedisUserSegmentRepository;
+import com.rtb.repository.UserSegmentRepository;
 import com.rtb.server.BidRequestHandler;
 import com.rtb.server.BidRouter;
 import com.rtb.server.HttpServer;
@@ -34,10 +38,15 @@ public final class Application {
 
         ObjectMapper objectMapper = createObjectMapper();
         PipelineConfig pipelineConfig = PipelineConfig.from(config);
+        RedisConfig redisConfig = RedisConfig.from(config);
+
+        // Repositories
+        UserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(redisConfig);
 
         // Pipeline stages — executed in order
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
+                new UserEnrichmentStage(userSegmentRepo),
                 new ResponseBuildStage(baseUrl)
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);

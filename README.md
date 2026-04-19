@@ -63,8 +63,8 @@ What real ad-tech companies (Moloco, Criteo, The Trade Desk, Koah) use in produc
 
 | Component | What we use | What production companies use | Why |
 |-----------|------------|------------------------------|-----|
-| **Publisher SDK** | REST API endpoint (Day 1) | Lightweight JS/iOS/Android SDK | Growl's JD mentions "Publisher SDK: lightweight integration that AI app developers embed in hours, not days." Our API endpoint serves as the backend for such an SDK. |
-| **Ad format** | JSON response with ad creative URL | Native ads, display, video, in-chat (Growl/Koah) | For AI apps: the ad is a text/card embedded in the chat. Our response includes ad_id, creative_url, display_text. |
+| **Publisher SDK** | REST API endpoint | Lightweight JS/iOS/Android SDK | Publishers integrate via REST API. The endpoint serves as the backend for any lightweight SDK. |
+| **Ad format** | JSON response with ad creative URL | Native ads, display, video, in-chat | For AI apps: the ad is a text/card embedded in the chat. Response includes ad_id, creative_url, display_text. |
 
 ## Tech Stack Summary Diagram
 
@@ -243,6 +243,57 @@ public class BidPipeline {
 | `EventPublisher` | `KafkaEventPublisher` | `NoOpEventPublisher`, Redpanda |
 | `TargetingEngine` | `SegmentTargetingEngine` | `ContextTargetingEngine`, ML |
 | `HealthCheck` | Redis + Kafka | Any dependency |
+
+## Feature-to-Code Map
+
+Where every ad-tech feature lives in the codebase. Use this as your navigation guide.
+
+| Feature | Pipeline Stage (orchestration) | Package (implementation) | Key files | Data store | How it works |
+|---------|-------------------------------|-------------------------|-----------|-----------|-------------|
+| **Request validation** | `RequestValidationStage` | `pipeline/stages/` | `RequestValidationStage.java` | None | Reject malformed/oversized requests before any processing |
+| **User enrichment** | `UserEnrichmentStage` | `repository/` | `RedisUserSegmentRepository.java` | Redis `SMEMBERS` | Fetch user's audience segments from Redis, attach to context |
+| **Audience targeting** | `CandidateRetrievalStage` | `targeting/` | `SegmentTargetingEngine.java`, `ContextTargetingEngine.java` | In-memory (campaign cache) | Match user segments + request context against campaign targeting rules |
+| **Frequency capping** | `FrequencyCapStage` | `frequency/` | `FrequencyCapper.java` (interface), `RedisFrequencyCapper.java` | Redis `INCR + EXPIRE` | "User X saw campaign Y 3x already → skip." Per user, per campaign, per time window. |
+| **Ad scoring** | `ScoringStage` | `scoring/` | `Scorer.java` (interface), `FeatureWeightedScorer.java`, `MLScorer.java` | None (compute) | Score each candidate: `relevance × bid_floor × pacing_factor × recency` |
+| **Ranking & selection** | `RankingStage` | `pipeline/stages/` | `RankingStage.java` | None | Sort candidates by score, pick top-K winners |
+| **Budget pacing** | `BudgetPacingStage` | `pacing/` | `BudgetPacer.java` (interface), `LocalBudgetPacer.java`, `DistributedBudgetPacer.java` | `AtomicLong` (local) + Redis `DECRBY` (distributed) | Check remaining budget, atomically decrement. Don't overspend. |
+| **Response building** | `ResponseBuildStage` | `pipeline/stages/` + `codec/` | `ResponseBuildStage.java`, `BidResponseCodec.java` | None | Build JSON bid response from winning candidate using Jackson Streaming |
+| **Event logging** | Post-pipeline (in `BidRequestHandler`) | `event/` | `EventPublisher.java` (interface), `KafkaEventPublisher.java` | Kafka topics | Async publish bid/impression/click events. Fire-and-forget. Never blocks bid path. |
+| **Campaign storage** | Pre-loaded at startup, refreshed periodically | `repository/` | `CampaignRepository.java` (interface), `PostgresCampaignRepository.java`, `CachedCampaignRepository.java` | PostgreSQL + in-memory cache | Load active campaigns from Postgres, cache in-memory, refresh every 30s |
+| **Metrics** | Cross-cutting (every stage records latency) | `metrics/` | `BidMetrics.java`, `MetricsRegistry.java` | Prometheus | Per-stage latency histogram, overall QPS, error rate, cache hit rate |
+| **Health checks** | Endpoint `GET /health` | `health/` | `HealthCheck.java` (interface), `RedisHealthCheck.java`, `KafkaHealthCheck.java`, `CompositeHealthCheck.java` | Pings Redis/Kafka | Aggregated health: all dependencies UP → 200 OK, any DOWN → 503 |
+| **Circuit breakers** | Wraps Redis/Kafka calls | `resilience/` | `CircuitBreaker.java`, `Timeout.java`, `Fallback.java` | In-memory state machine | Redis slow → circuit opens → fallback to default segments → don't block bid path |
+| **JSON parsing** | In `BidRequestHandler` before pipeline | `codec/` | `BidRequestCodec.java`, `BidResponseCodec.java`, `EventCodec.java` | None | Jackson Streaming API — zero-allocation parsing/writing |
+| **Configuration** | Loaded at startup | `config/` | `AppConfig.java`, `RedisConfig.java`, `KafkaConfig.java`, `PipelineConfig.java` | Env vars / config file | All tuning knobs: timeouts, pool sizes, feature flags, A/B split percentages |
+
+### Pipeline Flow (the order things execute)
+
+```
+HTTP Request arrives
+       │
+       ▼
+  BidRequestHandler (parse JSON via BidRequestCodec)
+       │
+       ▼
+  ┌─ BidPipeline ─────────────────────────────────────────────────┐
+  │                                                               │
+  │  1. RequestValidationStage    ← reject bad requests           │
+  │  2. UserEnrichmentStage       ← Redis: fetch user segments    │
+  │  3. CandidateRetrievalStage   ← match campaigns to user      │
+  │  4. FrequencyCapStage         ← Redis: filter over-exposed    │
+  │  5. ScoringStage              ← score each candidate          │
+  │  6. RankingStage              ← sort, pick top-K              │
+  │  7. BudgetPacingStage         ← check + decrement budget      │
+  │  8. ResponseBuildStage        ← build bid response            │
+  │                                                               │
+  └───────────────────────────────────────────────────────────────┘
+       │
+       ▼
+  BidRequestHandler (write response via BidResponseCodec)
+       │
+       ▼ (async, non-blocking)
+  KafkaEventPublisher (publish BidEvent)
+```
 
 ## Project Structure
 
@@ -465,18 +516,20 @@ k6 run load-test/k6-load-test.js
 - [ ] README polish: how to run, how to test, results summary
 - [ ] **End of Day 3**: Complete project with architecture doc, load test results, flame graphs, and GC analysis.
 
-## What to Discuss in Technical Conversation
+## Technical Design Decisions
 
-| Topic | What you can show |
-|-------|------------------|
-| **Ad decisioning pipeline** | Walk through `BidHandler`: parse → target → score → filter → rank → pace → respond. Explain each stage's latency budget. |
-| **Latency SLAs** | Show p50/p99/p999 numbers from k6. Explain why p99 matters more than average. Show the latency curve. |
-| **Zero-allocation hot path** | Show the allocation flame graph: near-zero objects created per bid. Explain why this matters for GC. |
-| **ZGC** | Show GC log: sub-ms pauses even at 50K QPS. Explain why you chose ZGC over G1. |
-| **Virtual Threads** | Explain how they handle 50K concurrent connections with minimal OS threads. Compare to Go goroutines. |
-| **Why not Spring** | Spring creates ~50 objects per request (reflection, AOP proxies, bean wiring). For ad serving, that's GC suicide. |
-| **Scaling** | Horizontal: stateless bidder behind load balancer. Redis is the shared state. Kafka for async events. ClickHouse for analytics. |
-| **What you'd do at 10x scale** | Shard Redis by user_id. ClickHouse for analytics. Kafka consumer groups. Maybe kernel bypass for the most latency-critical path. |
+| Decision | What we chose | Why | Alternative considered |
+|----------|-------------|-----|----------------------|
+| **Framework** | Vert.x (on Netty) | Non-blocking event loop, same transport as production ad-tech. No reflection overhead. | Spring Boot (too much per-request allocation), raw Netty (too verbose for this scope) |
+| **GC** | ZGC (Generational) | Sub-1ms pauses. Netflix uses it for streaming. Eliminates GC as p99 factor. | G1 (default, higher pauses), Shenandoah (good but ZGC has better tooling) |
+| **Redis client** | Lettuce (async) | Non-blocking, works with Virtual Threads, connection pooling built-in. | Jedis (synchronous, blocks under load) |
+| **JSON** | Jackson Streaming API | Zero-allocation parsing. Token-by-token without creating object tree. | ObjectMapper (creates 50+ objects per parse), Gson (slower) |
+| **Scoring v1** | Feature-weighted formula | Fast to implement, interpretable, good enough for v1. | ML model (better accuracy, added complexity — Phase 6.5 stretch) |
+| **Scoring v2 (stretch)** | XGBoost pCTR model | Predicts click-through rate from features. Closer to how production scoring works. | Deep neural net (overkill for this scale, longer inference) |
+| **Targeting v1** | Segment-based matching | Classical RTB approach, well-understood, fast. | Embedding similarity (added in Phase 4.5 stretch for AI-native targeting) |
+| **Budget pacing** | AtomicLong (local) | Lock-free, zero contention for single instance. | Redis DECRBY (needed for multi-instance, added as DistributedBudgetPacer) |
+| **Events** | Kafka async producer | Fire-and-forget, batched, never blocks bid path. | Direct DB insert (blocks), Redis Streams (simpler but less ecosystem) |
+| **Scaling strategy** | Stateless bidder behind LB | Horizontal scale: add instances. Redis is shared state. Kafka partitioned. | Sharded bidder (complex, not needed until >100K QPS per instance) |
 
 ## Later: C++ and Rust Versions
 

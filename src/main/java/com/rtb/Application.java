@@ -15,7 +15,9 @@ import com.rtb.pipeline.stages.RankingStage;
 import com.rtb.pipeline.stages.RequestValidationStage;
 import com.rtb.pipeline.stages.ResponseBuildStage;
 import com.rtb.pipeline.stages.ScoringStage;
+import com.rtb.scoring.ABTestScorer;
 import com.rtb.scoring.FeatureWeightedScorer;
+import com.rtb.scoring.MLScorer;
 import com.rtb.scoring.Scorer;
 import com.rtb.pipeline.stages.UserEnrichmentStage;
 import com.rtb.repository.CachedCampaignRepository;
@@ -57,7 +59,10 @@ public final class Application {
         CampaignRepository campaignRepo = new CachedCampaignRepository(objectMapper, "campaigns.json");
 
         TargetingEngine targetingEngine = new SegmentTargetingEngine();
-        Scorer scorer = new FeatureWeightedScorer();
+        Scorer scorer = createScorer(config);
+        if (scorer instanceof AutoCloseable closeableScorer) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeableScorer), "shutdown-scorer"));
+        }
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
 
@@ -100,6 +105,37 @@ public final class Application {
         } catch (Exception e) {
             logger.warn("Failed to close resource: {}", e.getMessage());
         }
+    }
+
+    private static Scorer createScorer(AppConfig config) {
+        String type = config.get("scoring.type", "feature-weighted");
+        logger.info("Scoring type: {}", type);
+
+        Scorer scorer = switch (type) {
+            case "ml" -> {
+                String modelPath = config.get("scoring.ml.model.path", "ml/pctr_model.onnx");
+                logger.info("Loading ML scorer from: {}", modelPath);
+                yield new MLScorer(modelPath);
+            }
+            case "abtest" -> {
+                String modelPath = config.get("scoring.ml.model.path", "ml/pctr_model.onnx");
+                int treatmentPct = config.getInt("scoring.abtest.treatment.percentage", 50);
+                logger.info("A/B test scorer: {}% ML ({}), {}% feature-weighted",
+                        treatmentPct, modelPath, 100 - treatmentPct);
+                yield new ABTestScorer(
+                        new FeatureWeightedScorer(),
+                        new MLScorer(modelPath),
+                        treatmentPct
+                );
+            }
+            default -> {
+                logger.info("Using feature-weighted scorer (default)");
+                yield new FeatureWeightedScorer();
+            }
+        };
+
+        logger.info("Scorer initialized: {}", scorer.getClass().getSimpleName());
+        return scorer;
     }
 
     private static ObjectMapper createObjectMapper() {

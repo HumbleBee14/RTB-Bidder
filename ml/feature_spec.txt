@@ -1,0 +1,4 @@
+total_features=66
+segments=sports,tech,travel,finance,gaming,music,food,fashion,health,auto,entertainment,education,news,shopping,fitness,outdoor,photography,parenting,pets,home_garden,age_18_24,age_25_34,age_35_44,age_45_54,age_55_plus,male,female,high_income,mid_income,low_income,urban,suburban,rural,ios,android,desktop,frequent_buyer,deal_seeker,brand_loyal,new_user,morning_active,evening_active,weekend_active,video_viewer,audio_listener,reader,commuter,remote_worker,student,professional,retired
+app_categories=news,sports,gaming,social,finance,health,education,shopping,travel,entertainment
+device_types=mobile,desktop,tablet

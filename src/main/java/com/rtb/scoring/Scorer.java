@@ -8,4 +8,9 @@ import com.rtb.model.UserProfile;
 public interface Scorer {
 
     double score(Campaign campaign, UserProfile user, AdContext context);
+
+    /** Identifies which scorer produced the result — for logging and A/B comparison. */
+    default String name() {
+        return getClass().getSimpleName();
+    }
 }

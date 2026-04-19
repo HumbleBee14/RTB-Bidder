@@ -12,7 +12,8 @@ public record Campaign(
         Set<String> creativeSizes,
         String creativeUrl,
         String advertiserDomain,
-        int maxImpressionsPerHour
+        int maxImpressionsPerHour,
+        double valuePerClick
 ) {
     /** Check if this campaign has a creative that fits the given slot sizes. */
     public boolean fitsSlot(java.util.List<String> slotSizes) {

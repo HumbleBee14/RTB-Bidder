@@ -1,0 +1,20 @@
+{
+  "user_id": "u123",
+  "app": {
+    "id": "app1",
+    "category": "news",
+    "bundle": "com.news.app"
+  },
+  "device": {
+    "type": "mobile",
+    "os": "android",
+    "geo": "US"
+  },
+  "ad_slots": [
+    {
+      "id": "slot1",
+      "sizes": ["300x250"],
+      "bid_floor": 0.50
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!--
+        Log directory: defaults to ./logs, override with LOG_DIR env var.
+        Toggle appenders: set CONSOLE_ENABLED, FILE_ENABLED, JSON_ENABLED to false.
+
+        Examples:
+          Dev (default):   all three active
+          Production:      LOG_DIR=/var/log/rtb CONSOLE_ENABLED=false java -jar ...
+          Debug session:   LOG_DIR=./logs java -Dlogging.level=DEBUG -jar ...
+    -->
+    <variable name="LOG_DIR" value="${LOG_DIR:-logs}"/>
+    <variable name="CONSOLE_ENABLED" value="${CONSOLE_ENABLED:-true}"/>
+    <variable name="FILE_ENABLED" value="${FILE_ENABLED:-true}"/>
+    <variable name="JSON_ENABLED" value="${JSON_ENABLED:-true}"/>
+
+    <!-- ── Console — human-readable, short timestamps for dev ── -->
+    <if condition='property("CONSOLE_ENABLED").equals("true")'>
+        <then>
+            <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+                <encoder>
+                    <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{24} - %msg%n</pattern>
+                </encoder>
+            </appender>
+        </then>
+    </if>
+
+    <!-- ── File — full timestamps, rolling daily, 30 days retention ── -->
+    <if condition='property("FILE_ENABLED").equals("true")'>
+        <then>
+            <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+                <file>${LOG_DIR}/rtb-bidder.log</file>
+                <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                    <fileNamePattern>${LOG_DIR}/rtb-bidder.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+                    <maxFileSize>100MB</maxFileSize>
+                    <maxHistory>30</maxHistory>
+                    <totalSizeCap>1GB</totalSizeCap>
+                </rollingPolicy>
+                <encoder>
+                    <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{36} - %msg%n</pattern>
+                </encoder>
+            </appender>
+        </then>
+    </if>
+
+    <!-- ── JSON — structured logs for aggregators (ELK, Loki, Datadog) ── -->
+    <if condition='property("JSON_ENABLED").equals("true")'>
+        <then>
+            <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+                <file>${LOG_DIR}/rtb-bidder.json</file>
+                <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                    <fileNamePattern>${LOG_DIR}/rtb-bidder.%d{yyyy-MM-dd}.%i.json</fileNamePattern>
+                    <maxFileSize>100MB</maxFileSize>
+                    <maxHistory>30</maxHistory>
+                    <totalSizeCap>1GB</totalSizeCap>
+                </rollingPolicy>
+                <encoder class="ch.qos.logback.classic.encoder.JsonEncoder"/>
+            </appender>
+        </then>
+    </if>
+
+    <!-- ── Log levels ── -->
+    <logger name="com.rtb" level="INFO"/>
+    <logger name="io.vertx" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+
+    <root level="WARN">
+        <if condition='property("CONSOLE_ENABLED").equals("true")'><then>
+            <appender-ref ref="CONSOLE"/>
+        </then></if>
+        <if condition='property("FILE_ENABLED").equals("true")'><then>
+            <appender-ref ref="FILE"/>
+        </then></if>
+        <if condition='property("JSON_ENABLED").equals("true")'><then>
+            <appender-ref ref="JSON_FILE"/>
+        </then></if>
+    </root>
+</configuration>

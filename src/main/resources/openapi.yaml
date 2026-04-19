@@ -1,0 +1,203 @@
+openapi: 3.0.3
+info:
+  title: RTB Bidder API
+  description: Real-Time Bidding engine — OpenRTB-like protocol
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+
+paths:
+  /bid:
+    post:
+      summary: Submit bid request
+      description: |
+        The hot path. Exchange sends a bid request, bidder responds with a bid (200)
+        or no-bid (204). A no-bid is normal — 40-60% of production traffic.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BidRequest'
+            example:
+              user_id: "u123"
+              app:
+                id: "app1"
+                category: "news"
+                bundle: "com.news.app"
+              device:
+                type: "mobile"
+                os: "android"
+                geo: "US"
+              ad_slots:
+                - id: "slot1"
+                  sizes: ["300x250"]
+                  bid_floor: 0.50
+      responses:
+        '200':
+          description: Bid response — we're bidding on this slot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BidResponse'
+        '204':
+          description: No-bid — nothing to bid on
+          headers:
+            X-NoBid-Reason:
+              schema:
+                type: string
+                enum: [NO_MATCHING_CAMPAIGN, ALL_FREQUENCY_CAPPED, BUDGET_EXHAUSTED, TIMEOUT, INTERNAL_ERROR]
+
+  /win:
+    post:
+      summary: Win notification
+      description: |
+        Exchange tells us our bid won the auction. This is when billing happens.
+        clearing_price may differ from bid price (second-price auction).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WinNotification'
+            example:
+              bid_id: "bid-abc-123"
+              campaign_id: "camp-001"
+              clearing_price: 0.45
+      responses:
+        '200':
+          description: Acknowledged
+
+  /impression:
+    get:
+      summary: Impression tracking pixel
+      description: |
+        Embedded as `<img src="...">` in the rendered ad. When the browser loads it,
+        we count one impression. Returns a 1x1 transparent GIF.
+      parameters:
+        - name: bid_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 1x1 transparent GIF pixel
+          content:
+            image/gif: {}
+
+  /click:
+    get:
+      summary: Click tracking
+      description: User clicked the ad. In production, returns 302 redirect to landing page.
+      parameters:
+        - name: bid_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Click tracked
+
+  /health:
+    get:
+      summary: Health check
+      description: For load balancer / K8s liveness probe.
+      responses:
+        '200':
+          description: All dependencies healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "UP"
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      description: Prometheus scrape endpoint (Phase 9).
+      responses:
+        '200':
+          description: Prometheus text format
+
+components:
+  schemas:
+    BidRequest:
+      type: object
+      required: [user_id, ad_slots]
+      properties:
+        user_id:
+          type: string
+        app:
+          type: object
+          properties:
+            id:
+              type: string
+            category:
+              type: string
+            bundle:
+              type: string
+        device:
+          type: object
+          properties:
+            type:
+              type: string
+            os:
+              type: string
+            geo:
+              type: string
+        ad_slots:
+          type: array
+          items:
+            type: object
+            required: [id, bid_floor]
+            properties:
+              id:
+                type: string
+              sizes:
+                type: array
+                items:
+                  type: string
+              bid_floor:
+                type: number
+                format: double
+
+    BidResponse:
+      type: object
+      properties:
+        bid_id:
+          type: string
+        ad_id:
+          type: string
+        price:
+          type: number
+          format: double
+        creative_url:
+          type: string
+        tracking_urls:
+          type: object
+          properties:
+            impression_url:
+              type: string
+            click_url:
+              type: string
+        advertiser_domain:
+          type: string
+
+    WinNotification:
+      type: object
+      required: [bid_id, clearing_price]
+      properties:
+        bid_id:
+          type: string
+        campaign_id:
+          type: string
+        clearing_price:
+          type: number
+          format: double

@@ -22,8 +22,13 @@ public final class RequestValidationStage implements PipelineStage {
             return;
         }
 
+
         for (BidRequest.AdSlot slot : request.adSlots()) {
             if (slot.id() == null || slot.id().isBlank()) {
+                ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
+                return;
+            }
+            if (slot.sizes() == null || slot.sizes().isEmpty()) {
                 ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
                 return;
             }

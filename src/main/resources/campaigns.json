@@ -5,6 +5,7 @@
     "budget": 5000.00,
     "bid_floor": 0.75,
     "target_segments": ["sports", "fitness", "outdoor"],
+    "creative_sizes": ["300x250", "728x90"],
     "creative_url": "https://ads.example.com/creative/nike-run.html",
     "advertiser_domain": "nike.com",
     "max_impressions_per_hour": 5
@@ -15,6 +16,7 @@
     "budget": 3000.00,
     "bid_floor": 0.50,
     "target_segments": ["tech", "gaming", "education"],
+    "creative_sizes": ["300x250", "160x600"],
     "creative_url": "https://ads.example.com/creative/techcorp-laptop.html",
     "advertiser_domain": "techcorp.com",
     "max_impressions_per_hour": 8
@@ -25,6 +27,7 @@
     "budget": 8000.00,
     "bid_floor": 1.20,
     "target_segments": ["travel", "outdoor", "photography"],
+    "creative_sizes": ["728x90", "300x250", "160x600"],
     "creative_url": "https://ads.example.com/creative/travelmax-deal.html",
     "advertiser_domain": "travelmax.com",
     "max_impressions_per_hour": 3
@@ -35,6 +38,7 @@
     "budget": 10000.00,
     "bid_floor": 2.00,
     "target_segments": ["finance", "high_income", "professional"],
+    "creative_sizes": ["300x250", "728x90"],
     "creative_url": "https://ads.example.com/creative/financehub-invest.html",
     "advertiser_domain": "financehub.com",
     "max_impressions_per_hour": 4
@@ -45,6 +49,7 @@
     "budget": 2000.00,
     "bid_floor": 0.30,
     "target_segments": ["gaming", "age_18_24", "evening_active"],
+    "creative_sizes": ["300x250", "160x600"],
     "creative_url": "https://ads.example.com/creative/gamezone-new.html",
     "advertiser_domain": "gamezone.com",
     "max_impressions_per_hour": 10
@@ -55,6 +60,7 @@
     "budget": 1500.00,
     "bid_floor": 0.40,
     "target_segments": ["food", "urban", "deal_seeker"],
+    "creative_sizes": ["300x250", "728x90"],
     "creative_url": "https://ads.example.com/creative/fooddelight-order.html",
     "advertiser_domain": "fooddelight.com",
     "max_impressions_per_hour": 6
@@ -65,6 +71,7 @@
     "budget": 4000.00,
     "bid_floor": 0.90,
     "target_segments": ["fashion", "shopping", "female"],
+    "creative_sizes": ["160x600", "300x250"],
     "creative_url": "https://ads.example.com/creative/styleco-summer.html",
     "advertiser_domain": "styleco.com",
     "max_impressions_per_hour": 5
@@ -75,6 +82,7 @@
     "budget": 6000.00,
     "bid_floor": 0.60,
     "target_segments": ["health", "fitness", "age_25_34"],
+    "creative_sizes": ["300x250", "728x90", "160x600"],
     "creative_url": "https://ads.example.com/creative/healthplus-app.html",
     "advertiser_domain": "healthplus.com",
     "max_impressions_per_hour": 7
@@ -85,6 +93,7 @@
     "budget": 7000.00,
     "bid_floor": 1.50,
     "target_segments": ["auto", "high_income", "suburban"],
+    "creative_sizes": ["728x90", "300x250"],
     "creative_url": "https://ads.example.com/creative/autodrive-suv.html",
     "advertiser_domain": "autodrive.com",
     "max_impressions_per_hour": 4
@@ -95,6 +104,7 @@
     "budget": 1000.00,
     "bid_floor": 0.25,
     "target_segments": ["education", "student", "age_18_24"],
+    "creative_sizes": ["300x250", "160x600"],
     "creative_url": "https://ads.example.com/creative/edulearn-course.html",
     "advertiser_domain": "edulearn.com",
     "max_impressions_per_hour": 12

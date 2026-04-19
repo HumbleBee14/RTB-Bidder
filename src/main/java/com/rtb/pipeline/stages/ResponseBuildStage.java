@@ -21,18 +21,17 @@ public final class ResponseBuildStage implements PipelineStage {
 
     @Override
     public void process(BidContext ctx) {
-        // Pick first candidate as winner — proper ranking in Phase 6
         List<AdCandidate> candidates = ctx.getCandidates();
         if (candidates == null || candidates.isEmpty()) {
             ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
             return;
         }
 
+        // Pick first candidate — proper ranking in Phase 6
         AdCandidate winner = candidates.get(0);
         ctx.setWinner(winner);
         Campaign campaign = winner.getCampaign();
 
-        // Bid at least the exchange's floor — bidding below is an automatic loss
         double exchangeFloor = ctx.getRequest().adSlots().get(0).bidFloor();
         double bidPrice = Math.max(campaign.bidFloor(), exchangeFloor);
         String bidId = UUID.randomUUID().toString();

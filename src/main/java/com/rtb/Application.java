@@ -8,7 +8,9 @@ import com.rtb.config.PipelineConfig;
 import com.rtb.config.RedisConfig;
 import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
+import com.rtb.frequency.RedisFrequencyCapper;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
+import com.rtb.pipeline.stages.FrequencyCapStage;
 import com.rtb.pipeline.stages.RequestValidationStage;
 import com.rtb.pipeline.stages.ResponseBuildStage;
 import com.rtb.pipeline.stages.UserEnrichmentStage;
@@ -50,20 +52,23 @@ public final class Application {
 
         CampaignRepository campaignRepo = new CachedCampaignRepository(objectMapper, "campaigns.json");
 
-        // Targeting
+        // Targeting + frequency capping
         TargetingEngine targetingEngine = new SegmentTargetingEngine();
+        RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
+        Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
 
         // Pipeline stages — executed in order
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
                 new UserEnrichmentStage(userSegmentRepo),
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
+                new FrequencyCapStage(frequencyCapper),
                 new ResponseBuildStage(baseUrl)
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);
 
         // Handlers
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline);
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, frequencyCapper);
         WinHandler winHandler = new WinHandler(objectMapper);
         TrackingHandler trackingHandler = new TrackingHandler();
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize);
@@ -77,9 +82,18 @@ public final class Application {
                         server.actualPort(), pipelineConfig.maxLatencyMs(), stages.size()))
                 .onFailure(err -> {
                     logger.error("Failed to start RTB Bidder", err);
-                    userSegmentRepo.close();
+                    closeQuietly(frequencyCapper);
+                    closeQuietly(userSegmentRepo);
                     vertx.close();
                 });
+    }
+
+    private static void closeQuietly(AutoCloseable resource) {
+        try {
+            resource.close();
+        } catch (Exception e) {
+            logger.warn("Failed to close resource: {}", e.getMessage());
+        }
     }
 
     private static ObjectMapper createObjectMapper() {

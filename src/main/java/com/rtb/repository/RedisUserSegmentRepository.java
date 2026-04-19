@@ -23,12 +23,12 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
 
     public RedisUserSegmentRepository(RedisConfig config) {
         RedisURI uri = RedisURI.create(config.uri());
-        uri.setTimeout(Duration.ofMillis(config.timeoutMs()));
+        uri.setTimeout(Duration.ofMillis(config.connectTimeoutMs()));
 
         this.client = RedisClient.create(uri);
         this.connection = client.connect();
         this.commands = connection.sync();
-        connection.setTimeout(Duration.ofMillis(config.timeoutMs()));
+        connection.setTimeout(Duration.ofMillis(config.commandTimeoutMs()));
 
         logger.info("Connected to Redis: {}:{}", uri.getHost(), uri.getPort());
     }

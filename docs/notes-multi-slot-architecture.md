@@ -157,9 +157,9 @@ regardless of which slot it's being considered for. What differs per slot is:
 
 We implement **fan-out per slot** with deduplication:
 
-1. **Shared stages** (run once): RequestValidation, UserEnrichment, CandidateRetrieval, FrequencyCap
-2. **Per-slot stages** (run per slot): ScoringStage filters by slot's bid floor, RankingStage picks winner per slot with campaign dedup
-3. **Response**: list of SlotBid (one per slot that had a winner)
+1. **Shared stages** (run once): RequestValidation, UserEnrichment, CandidateRetrieval, FrequencyCap, Scoring
+2. **Per-slot logic** (in RankingStage): creative size filter, bid floor filter, campaign dedup, pick highest-scoring winner
+3. **Response**: list of SlotBid (one per slot that had a winner), built by ResponseBuildStage from slotWinners map
 
 Performance impact: the shared stages (which include Redis calls — the expensive part) run once regardless of slot count. Per-slot scoring is O(candidates × slots) pure arithmetic — microseconds. No latency multiplication.
 

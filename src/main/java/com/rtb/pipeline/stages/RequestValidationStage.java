@@ -28,6 +28,10 @@ public final class RequestValidationStage implements PipelineStage {
                 ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
                 return;
             }
+            if (slot.sizes() == null || slot.sizes().isEmpty()) {
+                ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
+                return;
+            }
             if (slot.bidFloor() < 0) {
                 ctx.abort(NoBidReason.NO_MATCHING_CAMPAIGN);
                 return;

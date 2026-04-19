@@ -41,21 +41,15 @@ public final class ResponseBuildStage implements PipelineStage {
 
             // Pick the first matching creative size for this slot
             String matchedSize = findMatchingSize(campaign, slot);
-            int width = 0;
-            int height = 0;
-            if (matchedSize != null && matchedSize.contains("x")) {
-                String[] parts = matchedSize.split("x");
-                width = Integer.parseInt(parts[0]);
-                height = Integer.parseInt(parts[1]);
-            }
+            int[] dimensions = parseSize(matchedSize);
 
             bids.add(new BidResponse.SlotBid(
                     bidId,
                     slot.id(),
                     campaign.id(),
                     bidPrice,
-                    width,
-                    height,
+                    dimensions[0],
+                    dimensions[1],
                     campaign.creativeUrl(),
                     new BidResponse.TrackingUrls(
                             baseUrl + "/impression?bid_id=" + bidId,
@@ -75,6 +69,19 @@ public final class ResponseBuildStage implements PipelineStage {
             }
         }
         return null;
+    }
+
+    /** Parses "300x250" → {300, 250}. Returns {0, 0} on invalid format. */
+    private int[] parseSize(String size) {
+        if (size == null || !size.contains("x")) {
+            return new int[]{0, 0};
+        }
+        try {
+            String[] parts = size.split("x");
+            return new int[]{Integer.parseInt(parts[0]), Integer.parseInt(parts[1])};
+        } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+            return new int[]{0, 0};
+        }
     }
 
     @Override

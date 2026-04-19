@@ -1,6 +1,7 @@
 package com.rtb.server;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rtb.frequency.FrequencyCapper;
 import com.rtb.model.BidRequest;
 import com.rtb.model.NoBidReason;
 import com.rtb.pipeline.BidContext;
@@ -18,10 +19,12 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
 
     private final ObjectMapper objectMapper;
     private final BidPipeline pipeline;
+    private final FrequencyCapper frequencyCapper;
 
-    public BidRequestHandler(ObjectMapper objectMapper, BidPipeline pipeline) {
+    public BidRequestHandler(ObjectMapper objectMapper, BidPipeline pipeline, FrequencyCapper frequencyCapper) {
         this.objectMapper = objectMapper;
         this.pipeline = pipeline;
+        this.frequencyCapper = frequencyCapper;
     }
 
     @Override
@@ -53,6 +56,11 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
                     .putHeader("Content-Type", "application/json")
                     .setStatusCode(200)
                     .end(responseJson);
+
+            // Record frequency AFTER response is sent — only counts confirmed bids
+            if (bidCtx.getWinner() != null) {
+                frequencyCapper.recordImpression(request.userId(), bidCtx.getWinner().getCampaign().id());
+            }
 
         } catch (Exception e) {
             logger.error("Failed to process bid request", e);

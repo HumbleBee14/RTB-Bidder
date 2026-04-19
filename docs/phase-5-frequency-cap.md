@@ -16,16 +16,16 @@ Redis-based frequency capping. Each user×campaign pair is tracked with a counte
   │  CandidateRetrievalStage                                       │
   │       │  → 3 candidates matched: Nike, TechCorp, HealthPlus    │
   │       ▼                                                        │
-  │  FrequencyCapStage ◄── Redis INCR + EXPIRE (per candidate)     │
+  │  FrequencyCapStage ◄── Redis GET (read-only, per candidate)    │
   │       │                                                        │
-  │       │  freq:user_00042:camp-001 → INCR → 6 > max(5) → SKIP  │
-  │       │  freq:user_00042:camp-002 → INCR → 2 ≤ max(8) → KEEP  │
-  │       │  freq:user_00042:camp-008 → INCR → 1 ≤ max(7) → KEEP  │
+  │       │  freq:user_00042:camp-001 → GET → 5 ≥ max(5) → SKIP    │
+  │       │  freq:user_00042:camp-002 → GET → 2 < max(8) → KEEP    │
+  │       │  freq:user_00042:camp-008 → GET → 1 < max(7) → KEEP    │
   │       │                                                        │
   │       │  0 candidates left? → abort(ALL_FREQUENCY_CAPPED)      │
   │       └─ 2 candidates remain                                   │
   │       ▼                                                        │
-  │  ResponseBuildStage                                            │
+  │  ResponseBuildStage (picks winner, builds response)            │
   │                                                                │
   └────────────────────────────────────────────────────────────────┘
 ```
@@ -40,7 +40,7 @@ TTL:    3600 seconds (1 hour window)
 Check (FrequencyCapStage — read-only):
   GET freq:user_00042:camp-001     → returns current count (or nil)
 
-Record (ResponseBuildStage — winner only, Lua script for atomicity):
+Record (BidRequestHandler — after 200 sent, winner only, Lua script):
   EVAL "INCR + EXPIRE if new" freq:user_00042:camp-001 3600
 ```
 
@@ -56,7 +56,7 @@ Record (ResponseBuildStage — winner only, Lua script for atomicity):
 
 ### Check vs Record — split to avoid overcounting
 
-FrequencyCapStage checks all candidates (read-only GET). ResponseBuildStage records only the winner (INCR). If we incremented on every check, we'd cap campaigns that were evaluated but never served — premature capping.
+FrequencyCapStage checks all candidates (read-only GET). BidRequestHandler records only the winner (INCR) **after** the 200 response is sent. This ensures we never increment for bids that failed to send (SLA timeout, serialization error). If we incremented inside the pipeline, a post-loop SLA abort would overcount.
 
 ### Lua script for atomic INCR + EXPIRE
 

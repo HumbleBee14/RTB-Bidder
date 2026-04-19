@@ -63,12 +63,12 @@ public final class Application {
                 new UserEnrichmentStage(userSegmentRepo),
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
                 new FrequencyCapStage(frequencyCapper),
-                new ResponseBuildStage(baseUrl, frequencyCapper)
+                new ResponseBuildStage(baseUrl)
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);
 
         // Handlers
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline);
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, frequencyCapper);
         WinHandler winHandler = new WinHandler(objectMapper);
         TrackingHandler trackingHandler = new TrackingHandler();
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize);

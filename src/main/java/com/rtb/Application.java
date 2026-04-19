@@ -4,6 +4,11 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.rtb.config.AppConfig;
+import com.rtb.config.PipelineConfig;
+import com.rtb.pipeline.BidPipeline;
+import com.rtb.pipeline.PipelineStage;
+import com.rtb.pipeline.stages.RequestValidationStage;
+import com.rtb.pipeline.stages.ResponseBuildStage;
 import com.rtb.server.BidRequestHandler;
 import com.rtb.server.BidRouter;
 import com.rtb.server.HttpServer;
@@ -14,6 +19,8 @@ import io.vertx.core.VertxOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
+
 /** Composition root — wires dependencies and starts the server. */
 public final class Application {
 
@@ -23,19 +30,31 @@ public final class Application {
         AppConfig config = AppConfig.load();
         int port = config.getInt("server.port", 8080);
         int maxBodySize = config.getInt("server.body.maxSize", 65536);
+        String baseUrl = config.get("server.baseUrl", "http://localhost:" + port);
 
         ObjectMapper objectMapper = createObjectMapper();
+        PipelineConfig pipelineConfig = PipelineConfig.from(config);
 
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper);
+        // Pipeline stages — executed in order
+        List<PipelineStage> stages = List.of(
+                new RequestValidationStage(),
+                new ResponseBuildStage(baseUrl)
+        );
+        BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);
+
+        // Handlers
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline);
         WinHandler winHandler = new WinHandler(objectMapper);
         TrackingHandler trackingHandler = new TrackingHandler();
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize);
 
+        // Start
         Vertx vertx = Vertx.vertx(new VertxOptions());
         HttpServer httpServer = new HttpServer(vertx, bidRouter, port);
 
         httpServer.start()
-                .onSuccess(server -> logger.info("RTB Bidder started on port {}", server.actualPort()))
+                .onSuccess(server -> logger.info("RTB Bidder started on port {} | SLA: {}ms | stages: {}",
+                        server.actualPort(), pipelineConfig.maxLatencyMs(), stages.size()))
                 .onFailure(err -> {
                     logger.error("Failed to start RTB Bidder", err);
                     vertx.close();

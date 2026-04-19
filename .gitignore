@@ -3,6 +3,6 @@ logs/
 .env
 .idea/
 *.iml
-.vscode/
 .DS_Store
 Thumbs.db
+dependency-reduced-pom.xml

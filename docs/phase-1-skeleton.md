@@ -4,6 +4,38 @@
 
 Vert.x HTTP server on Netty with the complete RTB endpoint surface, OpenRTB-like request/response models, no-bid handling, and Swagger UI for interactive testing.
 
+## Request Flow
+
+```
+  Ad Exchange                          RTB Bidder (Vert.x on Netty)
+      │
+      │  POST /bid  {user_id, app, ad_slots}
+      ├──────────────────────────────────►┐
+      │                                   │  BidRequestHandler.handle()
+      │                                   │    ├─ parse JSON (ObjectMapper)
+      │                                   │    ├─ validate (user_id? ad_slots?)
+      │                                   │    ├─ build stub BidResponse
+      │                                   │    └─ serialize JSON
+      │◄──────────────────────────────────┤
+      │  200 {bid_id, price, tracking_urls}
+      │  OR 204 (no-bid + X-NoBid-Reason header)
+      │
+      │  POST /win  {bid_id, clearing_price}     ← we won the auction
+      ├──────────────────────────────────►┐
+      │◄──────────────────────────────────┤  WinHandler (log, ack)
+      │  200 acknowledged
+      │
+      │                    User's Browser
+      │                         │
+      │    <img src="/impression?bid_id=xxx">     ← ad rendered
+      │                         ├────────►┐
+      │                         │◄────────┤  TrackingHandler (1x1 GIF)
+      │
+      │    click on ad → /click?bid_id=xxx        ← user clicked
+      │                         ├────────►┐
+      │                         │◄────────┤  TrackingHandler (ack)
+```
+
 ## Endpoints
 
 | Method | Path | Purpose | Response |

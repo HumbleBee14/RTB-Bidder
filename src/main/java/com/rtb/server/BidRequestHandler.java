@@ -2,15 +2,14 @@ package com.rtb.server;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rtb.model.BidRequest;
-import com.rtb.model.BidResponse;
 import com.rtb.model.NoBidReason;
+import com.rtb.pipeline.BidContext;
+import com.rtb.pipeline.BidPipeline;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.web.RoutingContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.UUID;
 
 /** Handles bid requests — the hot path. */
 public final class BidRequestHandler implements Handler<RoutingContext> {
@@ -18,9 +17,11 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
     private static final Logger logger = LoggerFactory.getLogger(BidRequestHandler.class);
 
     private final ObjectMapper objectMapper;
+    private final BidPipeline pipeline;
 
-    public BidRequestHandler(ObjectMapper objectMapper) {
+    public BidRequestHandler(ObjectMapper objectMapper, BidPipeline pipeline) {
         this.objectMapper = objectMapper;
+        this.pipeline = pipeline;
     }
 
     @Override
@@ -35,49 +36,28 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
             }
 
             BidRequest request = objectMapper.readValue(body.getBytes(), BidRequest.class);
+            BidContext bidCtx = pipeline.execute(request, startNanos);
 
-            if (!isValid(request)) {
-                noBid(ctx, NoBidReason.NO_MATCHING_CAMPAIGN, startNanos);
+            if (bidCtx.isAborted()) {
+                noBid(ctx, bidCtx.getNoBidReason(), startNanos);
                 return;
             }
 
-            // TODO: replace with BidPipeline.process(request) in Phase 2
-            BidRequest.AdSlot firstSlot = request.adSlots().get(0);
-            String bidId = UUID.randomUUID().toString();
+            if (bidCtx.getResponse() == null) {
+                noBid(ctx, NoBidReason.INTERNAL_ERROR, startNanos);
+                return;
+            }
 
-            BidResponse response = new BidResponse(
-                    bidId,
-                    "ad-001",
-                    firstSlot.bidFloor() + 0.10,
-                    "https://ads.example.com/creative/ad-001.html",
-                    new BidResponse.TrackingUrls(
-                            "http://localhost:8080/impression?bid_id=" + bidId,
-                            "http://localhost:8080/click?bid_id=" + bidId
-                    ),
-                    "example.com"
-            );
-
-            String responseJson = objectMapper.writeValueAsString(response);
-            long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
-
+            String responseJson = objectMapper.writeValueAsString(bidCtx.getResponse());
             ctx.response()
                     .putHeader("Content-Type", "application/json")
                     .setStatusCode(200)
                     .end(responseJson);
 
-            logger.info("Bid: bidId={}, price={}, latencyMs={}", bidId, response.price(), latencyMs);
-
         } catch (Exception e) {
             logger.error("Failed to process bid request", e);
             noBid(ctx, NoBidReason.INTERNAL_ERROR, startNanos);
         }
-    }
-
-    private boolean isValid(BidRequest request) {
-        return request.userId() != null
-                && !request.userId().isBlank()
-                && request.adSlots() != null
-                && !request.adSlots().isEmpty();
     }
 
     private void noBid(RoutingContext ctx, NoBidReason reason, long startNanos) {

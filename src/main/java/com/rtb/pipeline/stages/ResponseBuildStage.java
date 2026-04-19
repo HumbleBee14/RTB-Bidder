@@ -3,7 +3,6 @@ package com.rtb.pipeline.stages;
 import com.rtb.model.BidRequest;
 import com.rtb.model.BidResponse;
 import com.rtb.pipeline.BidContext;
-import com.rtb.pipeline.PipelineException;
 import com.rtb.pipeline.PipelineStage;
 
 import java.util.UUID;
@@ -14,11 +13,11 @@ public final class ResponseBuildStage implements PipelineStage {
     private final String baseUrl;
 
     public ResponseBuildStage(String baseUrl) {
-        this.baseUrl = baseUrl;
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     }
 
     @Override
-    public void process(BidContext ctx) throws PipelineException {
+    public void process(BidContext ctx) {
         BidRequest request = ctx.getRequest();
         // TODO: build from winning candidate once targeting/scoring is wired (Phase 4-6)
         BidRequest.AdSlot firstSlot = request.adSlots().get(0);

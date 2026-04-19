@@ -43,6 +43,11 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
                 return;
             }
 
+            if (bidCtx.getResponse() == null) {
+                noBid(ctx, NoBidReason.INTERNAL_ERROR, startNanos);
+                return;
+            }
+
             String responseJson = objectMapper.writeValueAsString(bidCtx.getResponse());
             ctx.response()
                     .putHeader("Content-Type", "application/json")

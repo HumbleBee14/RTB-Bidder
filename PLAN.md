@@ -199,6 +199,22 @@ curl -X POST http://localhost:8080/bid -H 'Content-Type: application/json' \
 
 **Commit**: `phase-7: budget pacing — atomic budget decrement, stops serving when exhausted`
 
+### Phase 7 Future Enhancements (decorator on BudgetPacer — no architecture changes needed)
+
+These wrap the existing `BudgetPacer` interface via decorator pattern. Zero pipeline changes.
+
+| Enhancement | What it does | Why it matters | Implementation |
+|-------------|-------------|----------------|----------------|
+| **Hourly pacing** | Spreads budget evenly across the day ($1000/day = ~$42/hour) | Without it, morning traffic spike can burn entire budget in 1 hour | ✅ DONE — `HourlyPacedBudgetPacer` decorator |
+| **Spend smoothing** | Gradually reduces bid rate as budget depletes (80% spent → bid 50% of requests) | Avoids hard cliff when budget hits zero — smoother campaign delivery | ✅ DONE — built into `HourlyPacedBudgetPacer` (80-95% ramp-down) |
+| **Budget monitoring** | Tracks spend/exhaustion/throttle counts per campaign | Operations visibility — catch runaway spend before damage | ✅ DONE — `BudgetMetrics` counters wired into pacers. TODO: Micrometer gauges in Phase 9 |
+| **ML-driven throttling** | Adjusts bid rate based on predicted conversion value | Spend more during high-value hours, conserve during low-value | ❌ PENDING — needs Scorer + Pacer coordination, TODO in code |
+
+Refs:
+- [Optimal Budget Pacing for RTB](http://www0.cs.ucl.ac.uk/staff/w.zhang/rtb-papers/opt-rtb-pacing.pdf)
+- [Ad Banker: Budget Allocation](https://clearcode.cc/portfolio/ad-banker-case-study/)
+- [RTB Data & Revenue Architecture](https://e-mindset.space/blog/ads-platform-part-3-data-revenue/)
+
 ---
 
 ## Phase 8: Kafka Events — Full event lifecycle (bid → win → impression → click)

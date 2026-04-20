@@ -9,6 +9,12 @@ import com.rtb.config.RedisConfig;
 import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
 import com.rtb.frequency.RedisFrequencyCapper;
+import com.rtb.pacing.BudgetMetrics;
+import com.rtb.pacing.BudgetPacer;
+import com.rtb.pacing.DistributedBudgetPacer;
+import com.rtb.pacing.HourlyPacedBudgetPacer;
+import com.rtb.pacing.LocalBudgetPacer;
+import com.rtb.pipeline.stages.BudgetPacingStage;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
 import com.rtb.pipeline.stages.FrequencyCapStage;
 import com.rtb.pipeline.stages.RankingStage;
@@ -67,8 +73,13 @@ public final class Application {
         }
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
+        BudgetMetrics budgetMetrics = new BudgetMetrics();
+        BudgetPacer budgetPacer = createBudgetPacer(config, redisConfig, campaignRepo, budgetMetrics);
+        if (budgetPacer instanceof AutoCloseable closeablePacer) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePacer), "shutdown-pacer"));
+        }
 
-        // Pipeline stages — executed in order
+        // Pipeline stages — 8 stages, executed in order
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
                 new UserEnrichmentStage(userSegmentRepo),
@@ -76,6 +87,7 @@ public final class Application {
                 new FrequencyCapStage(frequencyCapper),
                 new ScoringStage(scorer),
                 new RankingStage(),
+                new BudgetPacingStage(budgetPacer),
                 new ResponseBuildStage(baseUrl)
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);
@@ -137,6 +149,29 @@ public final class Application {
 
         logger.info("Scorer initialized: {}", scorer.name());
         return scorer;
+    }
+
+    private static BudgetPacer createBudgetPacer(AppConfig config, RedisConfig redisConfig,
+                                                    CampaignRepository campaignRepo, BudgetMetrics metrics) {
+        String type = config.get("pacing.type", "local");
+        logger.info("Pacing type: {}", type);
+        BudgetPacer basePacer = switch (type) {
+            case "distributed" -> {
+                logger.info("Using distributed budget pacer (Redis)");
+                yield new DistributedBudgetPacer(redisConfig, campaignRepo);
+            }
+            default -> {
+                logger.info("Using local budget pacer (AtomicLong)");
+                yield new LocalBudgetPacer(campaignRepo, metrics);
+            }
+        };
+
+        boolean hourlyPacing = config.getBoolean("pacing.hourly.enabled", false);
+        if (hourlyPacing) {
+            int hours = config.getInt("pacing.hourly.hours", 24);
+            return new HourlyPacedBudgetPacer(basePacer, hours, metrics);
+        }
+        return basePacer;
     }
 
     private static MLScorer createMLScorer(AppConfig config) {

@@ -9,16 +9,13 @@ import org.slf4j.LoggerFactory;
 /**
  * Multi-stage cascade scoring — fast scorer filters, accurate scorer refines.
  *
- * Stage 1 (cheap): scores all candidates, returns a coarse ranking.
- * Stage 2 (expensive): re-scores only the top-N candidates from stage 1.
+ * Stage 1 (cheap): computes a coarse score for each candidate independently.
+ * Stage 2 (expensive): re-scores only candidates whose stage1 score meets
+ * or exceeds a configured threshold. Pruned candidates get score -1 (excluded).
  *
- * This is how production ad-tech works at scale:
- *   - 100 candidates → stage1 (formula, 0.01ms each) → top 20
- *   - 20 candidates → stage2 (ML model, 1ms each) → final ranking
- *   - Total: 100×0.01 + 20×1 = 21ms instead of 100×1 = 100ms
- *
- * The final score comes from stage2 (the accurate scorer).
- * Stage1 is only used for pruning — its score is discarded.
+ * This is threshold-based pruning, not top-N selection.
+ * Example: 100 candidates → stage1 (0.01ms each) → 20 pass threshold → stage2 (1ms each)
+ * Total: 100×0.01 + 20×1 = 21ms instead of 100×1 = 100ms
  */
 public final class CascadeScorer implements Scorer {
 
@@ -28,11 +25,6 @@ public final class CascadeScorer implements Scorer {
     private final Scorer stage2;
     private final double stage1Threshold;
 
-    /**
-     * @param stage1 fast scorer for initial filtering
-     * @param stage2 accurate scorer for final ranking
-     * @param stage1Threshold minimum stage1 score to pass to stage2 (0.0 passes all)
-     */
     public CascadeScorer(Scorer stage1, Scorer stage2, double stage1Threshold) {
         this.stage1 = stage1;
         this.stage2 = stage2;
@@ -45,12 +37,11 @@ public final class CascadeScorer implements Scorer {
     public double score(Campaign campaign, UserProfile user, AdContext context) {
         double coarseScore = stage1.score(campaign, user, context);
 
-        // Prune: if stage1 score is below threshold, skip expensive stage2
+        // Prune: below threshold → return -1 so RankingStage excludes this candidate
         if (coarseScore < stage1Threshold) {
-            return 0.0;
+            return -1.0;
         }
 
-        // Re-score with the accurate model
         return stage2.score(campaign, user, context);
     }
 

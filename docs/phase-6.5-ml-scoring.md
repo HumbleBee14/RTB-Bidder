@@ -83,17 +83,17 @@ Production ad-tech doesn't run one scorer. It cascades:
 
 ```
 Stage 1: FeatureWeightedScorer (fast, 0.01ms/candidate)
-  → 100 candidates in → scores all → prunes low scores
+  → 100 candidates in → scores all → prunes those below threshold
 
 Stage 2: MLScorer (accurate, 1ms/candidate)
-  → only top candidates from stage1 → re-scores → final ranking
+  → only candidates that passed stage1 threshold → re-scores → final ranking
 
 Total: 100×0.01 + 20×1 = 21ms   (vs 100×1 = 100ms with ML-only)
 ```
 
 Our `CascadeScorer` implements this:
 - Stage1 scores the candidate with the cheap formula
-- If score < threshold → return 0.0 (pruned, stage2 never runs)
+- If score < threshold → return -1.0 (pruned, RankingStage excludes it)
 - If score >= threshold → re-score with stage2 (ML model)
 - Final score comes from stage2 (accurate), stage1 is only for pruning
 

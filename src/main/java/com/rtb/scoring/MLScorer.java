@@ -101,9 +101,16 @@ public final class MLScorer implements Scorer, AutoCloseable {
             }
         }
 
-        // Extra features
-        features[schema.numFeatures() - 2] = LocalTime.now().getHour() / 23.0f;
-        features[schema.numFeatures() - 1] = (float) campaign.bidFloor();
+        // Extra features — positions derived from schema
+        int extraOffset = schema.extraFeaturesOffset();
+        List<String> extras = schema.extraFeatures();
+        for (int i = 0; i < extras.size(); i++) {
+            features[extraOffset + i] = switch (extras.get(i)) {
+                case "hour_of_day" -> LocalTime.now().getHour() / 23.0f;
+                case "bid_floor" -> (float) campaign.bidFloor();
+                default -> 0.0f;
+            };
+        }
 
         return features;
     }

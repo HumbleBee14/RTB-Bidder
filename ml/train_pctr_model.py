@@ -64,13 +64,12 @@ def generate_synthetic_data(segments, app_categories, device_types, num_features
         device_idx = np.random.randint(n_devices)
         X[i, n_segments + n_apps + device_idx] = 1.0
 
-        # Hour of day (normalized 0-1)
+        # Extra features — positions derived from schema
+        extra_offset = n_segments + n_apps + n_devices
         hour = np.random.randint(0, 24)
-        X[i, -2] = hour / 23.0
-
-        # Campaign bid floor
         bid_floor = np.random.uniform(0.1, 2.0)
-        X[i, -1] = bid_floor
+        X[i, extra_offset + 0] = hour / 23.0      # hour_of_day
+        X[i, extra_offset + 1] = bid_floor          # bid_floor
 
         # Click probability — realistic distributions
         base_ctr = 0.03

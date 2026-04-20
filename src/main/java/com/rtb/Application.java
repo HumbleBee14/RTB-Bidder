@@ -36,6 +36,8 @@ import com.rtb.server.BidRouter;
 import com.rtb.server.HttpServer;
 import com.rtb.server.TrackingHandler;
 import com.rtb.server.WinHandler;
+import com.rtb.targeting.EmbeddingTargetingEngine;
+import com.rtb.targeting.HybridTargetingEngine;
 import com.rtb.targeting.SegmentTargetingEngine;
 import com.rtb.targeting.TargetingEngine;
 import io.vertx.core.Vertx;
@@ -66,7 +68,7 @@ public final class Application {
 
         CampaignRepository campaignRepo = new CachedCampaignRepository(objectMapper, "campaigns.json");
 
-        TargetingEngine targetingEngine = new SegmentTargetingEngine();
+        TargetingEngine targetingEngine = createTargetingEngine(config);
         Scorer scorer = createScorer(config);
         if (scorer instanceof AutoCloseable closeableScorer) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeableScorer), "shutdown-scorer"));
@@ -172,6 +174,32 @@ public final class Application {
             return new HourlyPacedBudgetPacer(basePacer, hours, metrics);
         }
         return basePacer;
+    }
+
+    private static TargetingEngine createTargetingEngine(AppConfig config) {
+        String type = config.get("targeting.type", "segment");
+        logger.info("Targeting type: {}", type);
+        return switch (type) {
+            case "embedding" -> {
+                String campaignEmb = config.get("targeting.embedding.campaign.path", "ml/campaign_embeddings.json");
+                String wordEmb = config.get("targeting.embedding.word.path", "ml/word_embeddings.json");
+                double threshold = Double.parseDouble(config.get("targeting.embedding.threshold", "0.3"));
+                yield new EmbeddingTargetingEngine(campaignEmb, wordEmb, threshold);
+            }
+            case "hybrid" -> {
+                String campaignEmb = config.get("targeting.embedding.campaign.path", "ml/campaign_embeddings.json");
+                String wordEmb = config.get("targeting.embedding.word.path", "ml/word_embeddings.json");
+                double threshold = Double.parseDouble(config.get("targeting.embedding.threshold", "0.3"));
+                yield new HybridTargetingEngine(
+                        new SegmentTargetingEngine(),
+                        new EmbeddingTargetingEngine(campaignEmb, wordEmb, threshold)
+                );
+            }
+            default -> {
+                logger.info("Using segment targeting (default)");
+                yield new SegmentTargetingEngine();
+            }
+        };
     }
 
     private static MLScorer createMLScorer(AppConfig config) {

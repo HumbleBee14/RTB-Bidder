@@ -1,11 +1,12 @@
 package com.rtb.model;
 
-/** Request context used for contextual targeting — app, device, geo. */
+/** Request context used for contextual targeting — app, device, geo, conversation. */
 public record AdContext(
         String appCategory,
         String deviceType,
         String deviceOs,
-        String geo
+        String geo,
+        String contextText
 ) {
     public static AdContext from(BidRequest request) {
         BidRequest.App app = request.app();
@@ -14,7 +15,8 @@ public record AdContext(
                 app != null ? app.category() : null,
                 device != null ? device.type() : null,
                 device != null ? device.os() : null,
-                device != null ? device.geo() : null
+                device != null ? device.geo() : null,
+                request.contextText()
         );
     }
 }

@@ -116,6 +116,33 @@ scoring.cascade.threshold=0.1
 
 All implement `Scorer` interface. Pipeline, stages, ranking — nothing changes. One config line swaps the strategy.
 
+### Composability — scorers are building blocks
+
+Every scorer implements `Scorer`. Any scorer can wrap or be wrapped by another:
+
+```java
+// Formula only
+Scorer scorer = new FeatureWeightedScorer();
+
+// ML only
+Scorer scorer = new MLScorer(model, schema);
+
+// A/B test: 50% formula, 50% ML
+Scorer scorer = new ABTestScorer(new FeatureWeightedScorer(), new MLScorer(...), 50);
+
+// Cascade: formula prunes → ML re-scores
+Scorer scorer = new CascadeScorer(new FeatureWeightedScorer(), new MLScorer(...), 0.1);
+
+// A/B test between formula vs cascade (advanced)
+Scorer scorer = new ABTestScorer(
+    new FeatureWeightedScorer(),
+    new CascadeScorer(new FeatureWeightedScorer(), new MLScorer(...), 0.1),
+    50
+);
+```
+
+Adding a new scorer (e.g. `DeepLearningScorer`, `ContextualScorer`) = implement `Scorer` interface + one line in `Application.java`. No pipeline changes, no stage changes, no ranking changes.
+
 ## Performance Considerations
 
 ### Feature assembly: zero I/O on hot path

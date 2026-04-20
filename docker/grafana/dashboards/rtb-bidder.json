@@ -1,0 +1,310 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Bid QPS (requests/sec)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(bid_requests_total[1m])",
+          "legendFormat": "Total QPS"
+        }
+      ]
+    },
+    {
+      "title": "Bid vs No-Bid Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 20, "lineWidth": 2, "stacking": { "mode": "normal" } },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(bid_responses_total{outcome=\"bid\"}[1m])",
+          "legendFormat": "Bids"
+        },
+        {
+          "expr": "rate(bid_responses_total{outcome=\"nobid\"}[1m])",
+          "legendFormat": "No-Bids"
+        },
+        {
+          "expr": "rate(bid_responses_total{outcome=\"timeout\"}[1m])",
+          "legendFormat": "Timeouts"
+        },
+        {
+          "expr": "rate(bid_responses_total{outcome=\"error\"}[1m])",
+          "legendFormat": "Errors"
+        }
+      ]
+    },
+    {
+      "title": "Fill Rate",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.15 },
+              { "color": "green", "value": 0.30 }
+            ]
+          },
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "bid_fill_rate",
+          "legendFormat": "Fill Rate"
+        }
+      ]
+    },
+    {
+      "title": "Latency Percentiles (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 5, "lineWidth": 2 },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "bid_latency_seconds{quantile=\"0.5\"} * 1000",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "bid_latency_seconds{quantile=\"0.9\"} * 1000",
+          "legendFormat": "p90"
+        },
+        {
+          "expr": "bid_latency_seconds{quantile=\"0.99\"} * 1000",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "bid_latency_seconds{quantile=\"0.999\"} * 1000",
+          "legendFormat": "p99.9"
+        }
+      ]
+    },
+    {
+      "title": "Error & Timeout Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "reqps"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Errors" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Timeouts" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "rate(bid_responses_total{outcome=\"error\"}[1m])",
+          "legendFormat": "Errors"
+        },
+        {
+          "expr": "rate(bid_responses_total{outcome=\"timeout\"}[1m])",
+          "legendFormat": "Timeouts"
+        }
+      ]
+    },
+    {
+      "title": "Pipeline Stage Latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "stacking": { "mode": "normal" } },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(pipeline_stage_latency_seconds_sum{stage=\"RequestValidation\"}[1m]) / rate(pipeline_stage_latency_seconds_count{stage=\"RequestValidation\"}[1m]) * 1000",
+          "legendFormat": "Validation"
+        },
+        {
+          "expr": "rate(pipeline_stage_latency_seconds_sum{stage=\"UserEnrichment\"}[1m]) / rate(pipeline_stage_latency_seconds_count{stage=\"UserEnrichment\"}[1m]) * 1000",
+          "legendFormat": "UserEnrichment"
+        },
+        {
+          "expr": "rate(pipeline_stage_latency_seconds_sum{stage=\"CandidateRetrieval\"}[1m]) / rate(pipeline_stage_latency_seconds_count{stage=\"CandidateRetrieval\"}[1m]) * 1000",
+          "legendFormat": "CandidateRetrieval"
+        },
+        {
+          "expr": "rate(pipeline_stage_latency_seconds_sum{stage=\"FrequencyCap\"}[1m]) / rate(pipeline_stage_latency_seconds_count{stage=\"FrequencyCap\"}[1m]) * 1000",
+          "legendFormat": "FrequencyCap"
+        },
+        {
+          "expr": "rate(pipeline_stage_latency_seconds_sum[1m]) / rate(pipeline_stage_latency_seconds_count[1m]) * 1000",
+          "legendFormat": "{{stage}}"
+        }
+      ]
+    },
+    {
+      "title": "Frequency Cap & Budget Hits",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(frequency_cap_hit_total[1m])",
+          "legendFormat": "Frequency Cap Hits"
+        },
+        {
+          "expr": "rate(budget_exhausted_total[1m])",
+          "legendFormat": "Budget Exhausted"
+        }
+      ]
+    },
+    {
+      "title": "Circuit Breaker State",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 24 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "CLOSED", "color": "green" } } },
+            { "type": "value", "options": { "1": { "text": "OPEN", "color": "red" } } },
+            { "type": "value", "options": { "2": { "text": "HALF_OPEN", "color": "yellow" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "circuit_breaker_state",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "title": "JVM Memory (Heap)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 20, "lineWidth": 2 },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "jvm_memory_used_bytes{area=\"heap\"}",
+          "legendFormat": "Heap Used"
+        },
+        {
+          "expr": "jvm_memory_committed_bytes{area=\"heap\"}",
+          "legendFormat": "Heap Committed"
+        },
+        {
+          "expr": "jvm_memory_max_bytes{area=\"heap\"}",
+          "legendFormat": "Heap Max"
+        }
+      ]
+    },
+    {
+      "title": "GC Pause Time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(jvm_gc_pause_seconds_sum[1m])",
+          "legendFormat": "GC Pause Rate (sec/sec)"
+        },
+        {
+          "expr": "increase(jvm_gc_pause_seconds_count[1m])",
+          "legendFormat": "GC Pauses/min"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["rtb", "bidder", "ad-tech"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "RTB Bidder — Live Dashboard",
+  "uid": "rtb-bidder-main",
+  "version": 1
+}

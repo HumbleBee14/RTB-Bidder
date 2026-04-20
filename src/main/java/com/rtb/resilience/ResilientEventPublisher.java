@@ -11,13 +11,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Wraps EventPublisher with circuit breaker.
  *
- * When Kafka is down:
- *   - Events are silently dropped (logged at debug level)
- *   - The bid path is never affected — events are fire-and-forget
- *   - When Kafka recovers, circuit transitions HALF_OPEN → CLOSED, events flow again
- *
- * WinEvents (billing-critical) are logged at WARN when dropped — these need
- * manual reconciliation if Kafka was down during billing events.
+ * Kafka's async callback reports failures via recordExternalFailure() —
+ * the circuit breaker detects failures even though KafkaEventPublisher
+ * catches exceptions internally (fire-and-forget pattern).
  */
 public final class ResilientEventPublisher implements EventPublisher {
 
@@ -26,9 +22,9 @@ public final class ResilientEventPublisher implements EventPublisher {
     private final EventPublisher delegate;
     private final CircuitBreaker circuitBreaker;
 
-    public ResilientEventPublisher(EventPublisher delegate, int failureThreshold, long cooldownMs) {
+    public ResilientEventPublisher(EventPublisher delegate, CircuitBreaker circuitBreaker) {
         this.delegate = delegate;
-        this.circuitBreaker = new CircuitBreaker("kafka-events", failureThreshold, cooldownMs);
+        this.circuitBreaker = circuitBreaker;
     }
 
     @Override
@@ -44,7 +40,6 @@ public final class ResilientEventPublisher implements EventPublisher {
         circuitBreaker.execute(
                 () -> { delegate.publishWin(event); },
                 () -> {
-                    // WinEvents are billing-critical — warn loudly when dropped
                     logger.warn("Kafka circuit open — DROPPED WinEvent bidId={} clearingPrice={}",
                             event.bidId(), event.clearingPrice());
                 }

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.rtb.config.AppConfig;
 import com.rtb.config.PipelineConfig;
 import com.rtb.config.RedisConfig;
+import com.rtb.resilience.CircuitBreaker;
 import com.rtb.resilience.ResilientRedis;
 import com.rtb.resilience.ResilientEventPublisher;
 import com.rtb.health.CompositeHealthCheck;
@@ -86,31 +87,39 @@ public final class Application {
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
 
-        // Resilience — circuit breakers on Redis (segments + frequency capping)
-        int cbFailureThreshold = config.getInt("resilience.circuit.failure.threshold", 5);
-        long cbCooldownMs = config.getLong("resilience.circuit.cooldown.ms", 10000);
+        // Metrics (created early — circuit breakers register gauges)
+        MetricsRegistry metricsRegistry = new MetricsRegistry();
+
+        // Resilience — separate circuit breakers for Redis and Kafka
+        int redisFailures = config.getInt("resilience.redis.failure.threshold", 5);
+        long redisCooldown = config.getLong("resilience.redis.cooldown.ms", 10000);
+        int kafkaFailures = config.getInt("resilience.kafka.failure.threshold", 5);
+        long kafkaCooldown = config.getLong("resilience.kafka.cooldown.ms", 30000);
+
         ResilientRedis resilientRedis = new ResilientRedis(
-                userSegmentRepo, frequencyCapper, cbFailureThreshold, cbCooldownMs);
-        logger.info("Circuit breakers: failureThreshold={}, cooldownMs={}", cbFailureThreshold, cbCooldownMs);
+                userSegmentRepo, frequencyCapper, redisFailures, redisCooldown);
+        resilientRedis.getCircuitBreaker().registerMetrics(metricsRegistry.registry());
+        logger.info("Circuit breakers: redis(failures={}, cooldown={}ms), kafka(failures={}, cooldown={}ms)",
+                redisFailures, redisCooldown, kafkaFailures, kafkaCooldown);
         BudgetMetrics budgetMetrics = new BudgetMetrics();
         BudgetPacer budgetPacer = createBudgetPacer(config, redisConfig, campaignRepo, budgetMetrics);
         if (budgetPacer instanceof AutoCloseable closeablePacer) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePacer), "shutdown-pacer"));
         }
 
-        // Pipeline stages — 8 stages, using resilient wrappers for external dependencies
+        // Pipeline stages — 8 stages, executed in order
+        // resilientRedis wraps both userSegmentRepo AND frequencyCapper with one circuit breaker
+        // — if Redis is down, both segment lookup and freq capping degrade together
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
-                new UserEnrichmentStage(resilientRedis),
+                new UserEnrichmentStage(resilientRedis),       // segments via circuit breaker
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
-                new FrequencyCapStage(resilientRedis),
+                new FrequencyCapStage(resilientRedis),          // freq cap via same circuit breaker
                 new ScoringStage(scorer),
                 new RankingStage(),
                 new BudgetPacingStage(budgetPacer),
                 new ResponseBuildStage(baseUrl)
         );
-        // Metrics + health
-        MetricsRegistry metricsRegistry = new MetricsRegistry();
         BidMetrics bidMetrics = new BidMetrics(metricsRegistry.registry());
 
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig, bidMetrics);
@@ -123,13 +132,14 @@ public final class Application {
                 kafkaHealthCheck
         ));
 
-        // Event publishing — wrapped with circuit breaker
-        EventPublisher rawEventPublisher = createEventPublisher(config);
+        // Event publishing — Kafka async failures feed into circuit breaker
+        CircuitBreaker kafkaCircuitBreaker = new CircuitBreaker("kafka-events", kafkaFailures, kafkaCooldown);
+        kafkaCircuitBreaker.registerMetrics(metricsRegistry.registry());
+        EventPublisher rawEventPublisher = createEventPublisher(config, kafkaCircuitBreaker::recordExternalFailure);
         if (rawEventPublisher instanceof AutoCloseable closeablePublisher) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePublisher), "shutdown-events"));
         }
-        EventPublisher eventPublisher = new ResilientEventPublisher(
-                rawEventPublisher, cbFailureThreshold, cbCooldownMs);
+        EventPublisher eventPublisher = new ResilientEventPublisher(rawEventPublisher, kafkaCircuitBreaker);
 
         // Handlers — use resilient wrappers
         BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, resilientRedis, eventPublisher, bidMetrics);
@@ -191,11 +201,12 @@ public final class Application {
         return scorer;
     }
 
-    private static EventPublisher createEventPublisher(AppConfig config) {
+    private static EventPublisher createEventPublisher(AppConfig config,
+                                                        java.util.function.Consumer<Exception> failureCallback) {
         String type = config.get("events.type", "noop");
         logger.info("Event publisher: {}", type);
         return switch (type) {
-            case "kafka" -> new KafkaEventPublisher(config);
+            case "kafka" -> new KafkaEventPublisher(config, failureCallback);
             default -> {
                 logger.info("Using NoOp event publisher (events logged at DEBUG level)");
                 yield new NoOpEventPublisher();

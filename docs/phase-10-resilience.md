@@ -116,12 +116,34 @@ EventPublisher resilient = new ResilientEventPublisher(raw, 5, 10000);
 
 Works with both Kafka and NoOp — the circuit breaker wraps the interface, not the implementation.
 
-### Config
+### Why sliding window, not consecutive failure count
+
+Consecutive: 4 failures → 1 success → resets to 0 → if Redis is flapping (50% success rate), the circuit never trips. Sliding window: 4 failures + 1 success in 60s = 4 failures still counted → one more trips it. Failures only reset when the window expires.
+
+### Why separate configs for Redis and Kafka
+
+Redis recovers in seconds (container restart). Kafka takes longer (broker rebalance, topic reassignment). Different cooldowns:
 
 ```properties
-resilience.circuit.failure.threshold=5     # open after 5 consecutive failures
-resilience.circuit.cooldown.ms=10000       # try again after 10 seconds
+resilience.redis.failure.threshold=5       # trip after 5 failures in 60s
+resilience.redis.cooldown.ms=10000         # retry after 10 seconds
+resilience.kafka.failure.threshold=5       # trip after 5 failures in 60s
+resilience.kafka.cooldown.ms=30000         # retry after 30 seconds (Kafka is slower to recover)
 ```
+
+### Why Kafka circuit breaker uses external failure reporting
+
+`KafkaEventPublisher.publish()` is async — `producer.send()` returns immediately, the callback fires later on a background thread. The circuit breaker wrapper never sees the exception. Fix: Kafka callback calls `circuitBreaker.recordExternalFailure(exception)` — the circuit breaker detects failures even from async operations.
+
+### Circuit breaker metrics in Prometheus
+
+```
+circuit_breaker_state{name="redis"}          0 = CLOSED, 0.5 = HALF_OPEN, 1 = OPEN
+circuit_breaker_failures{name="redis"}       current failure count in window
+circuit_breaker_trips_total{name="kafka-events"}  total times circuit has tripped
+```
+
+Grafana alerts on `circuit_breaker_state == 1` = dependency is down.
 
 ## Test Results
 

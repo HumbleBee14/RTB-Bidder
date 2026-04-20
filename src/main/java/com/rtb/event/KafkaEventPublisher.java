@@ -33,12 +33,14 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
     private final KafkaProducer<String, String> producer;
     private final ObjectMapper objectMapper;
     private final ExecutorService executor;
+    private final java.util.function.Consumer<Exception> failureCallback;
     private final String bidTopic;
     private final String winTopic;
     private final String impressionTopic;
     private final String clickTopic;
 
-    public KafkaEventPublisher(AppConfig config) {
+    public KafkaEventPublisher(AppConfig config, java.util.function.Consumer<Exception> failureCallback) {
+        this.failureCallback = failureCallback;
         this.bidTopic = config.get("kafka.topic.bid-events", "bid-events");
         this.winTopic = config.get("kafka.topic.win-events", "win-events");
         this.impressionTopic = config.get("kafka.topic.impression-events", "impression-events");
@@ -100,10 +102,12 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
             producer.send(record, (metadata, exception) -> {
                 if (exception != null) {
                     logger.error("Failed to publish to topic {} key={}", topic, key, exception);
+                    failureCallback.accept(exception);
                 }
             });
         } catch (Exception e) {
             logger.error("Failed to serialize event for topic {} key={}", topic, key, e);
+            failureCallback.accept(e);
         }
     }
 

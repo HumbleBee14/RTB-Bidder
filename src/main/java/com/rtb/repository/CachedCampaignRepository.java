@@ -1,36 +1,42 @@
 package com.rtb.repository;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rtb.model.Campaign;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
-/** Loads campaigns from a JSON file on classpath. Later: wraps PostgresCampaignRepository with cache. */
+/**
+ * Decorator: caches campaigns from any CampaignRepository in memory.
+ *
+ * getActiveCampaigns() returns instantly from the cache — zero I/O on the hot path.
+ * Call refresh() to reload from the underlying source (e.g., on a scheduled timer).
+ *
+ * Thread-safe: AtomicReference swap means readers never see a partial update.
+ * The cached list is immutable (List.copyOf).
+ */
 public final class CachedCampaignRepository implements CampaignRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(CachedCampaignRepository.class);
 
-    private final List<Campaign> campaigns;
+    private final CampaignRepository delegate;
+    private final AtomicReference<List<Campaign>> cache = new AtomicReference<>(List.of());
 
-    public CachedCampaignRepository(ObjectMapper objectMapper, String resourcePath) {
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
-            if (is == null) {
-                throw new IllegalArgumentException("Campaign file not found: " + resourcePath);
-            }
-            this.campaigns = List.copyOf(objectMapper.readValue(is, new TypeReference<List<Campaign>>() {}));
-            logger.info("Loaded {} campaigns from {}", campaigns.size(), resourcePath);
-        } catch (IOException e) {
-            throw new RuntimeException("Failed to load campaigns from " + resourcePath, e);
-        }
+    public CachedCampaignRepository(CampaignRepository delegate) {
+        this.delegate = delegate;
+        refresh();
     }
 
     @Override
     public List<Campaign> getActiveCampaigns() {
-        return campaigns;
+        return cache.get();
+    }
+
+    /** Reload campaigns from the underlying repository. Safe to call from any thread. */
+    public void refresh() {
+        List<Campaign> campaigns = delegate.getActiveCampaigns();
+        cache.set(campaigns);
+        logger.info("Campaign cache refreshed: {} active campaigns", campaigns.size());
     }
 }

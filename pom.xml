@@ -105,6 +105,13 @@
             <artifactId>onnxruntime</artifactId>
             <version>${onnxruntime.version}</version>
         </dependency>
+        <!-- PostgreSQL JDBC (Phase 13 — campaign storage, loaded at startup, not hot path) -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.5</version>
+        </dependency>
+
         <!-- Janino — enables conditional <if> blocks in logback.xml -->
         <dependency>
             <groupId>org.codehaus.janino</groupId>

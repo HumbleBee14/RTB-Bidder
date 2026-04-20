@@ -33,10 +33,25 @@ services:
       POSTGRES_PASSWORD: rtb
     volumes:
       - postgres-data:/var/lib/postgresql/data
-    profiles:
-      - full
+      - ./docker/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    ports:
+      - "8123:8123"     # HTTP interface (queries, inserts)
+      - "9000:9000"     # Native protocol
+    environment:
+      CLICKHOUSE_DB: rtb
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./docker/init-clickhouse.sql:/docker-entrypoint-initdb.d/init.sql
+    depends_on:
+      - kafka
 
 volumes:
   redis-data:
   kafka-data:
   postgres-data:
+  clickhouse-data:

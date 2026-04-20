@@ -1,0 +1,121 @@
+package com.rtb.metrics;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * Core bidder metrics — the RED method: Rate, Errors, Duration.
+ *
+ * These are THE metrics that appear on production ad-tech dashboards.
+ * Prometheus scrapes /metrics every 15s and Grafana visualizes percentiles.
+ */
+public final class BidMetrics {
+
+    private final MeterRegistry registry;
+
+    // Rate
+    private final Counter bidRequestsTotal;
+    private final Counter bidResponsesBid;
+    private final Counter bidResponsesNoBid;
+    private final Counter bidResponsesError;
+    private final Counter bidResponsesTimeout;
+
+    // Duration
+    private final Timer bidLatency;
+
+    // Business metrics
+    private final Counter frequencyCapHitTotal;
+    private final Counter budgetExhaustedTotal;
+
+    // Fill rate tracking
+    private final AtomicLong totalRequests = new AtomicLong();
+    private final AtomicLong totalBids = new AtomicLong();
+
+    public BidMetrics(MeterRegistry registry) {
+        this.registry = registry;
+
+        this.bidRequestsTotal = Counter.builder("bid_requests_total")
+                .description("Total bid requests received")
+                .register(registry);
+
+        this.bidResponsesBid = Counter.builder("bid_responses_total")
+                .tag("outcome", "bid")
+                .description("Bid responses by outcome")
+                .register(registry);
+
+        this.bidResponsesNoBid = Counter.builder("bid_responses_total")
+                .tag("outcome", "nobid")
+                .register(registry);
+
+        this.bidResponsesError = Counter.builder("bid_responses_total")
+                .tag("outcome", "error")
+                .register(registry);
+
+        this.bidResponsesTimeout = Counter.builder("bid_responses_total")
+                .tag("outcome", "timeout")
+                .register(registry);
+
+        this.bidLatency = Timer.builder("bid_latency_seconds")
+                .description("End-to-end bid request latency")
+                .publishPercentiles(0.5, 0.9, 0.99, 0.999)
+                .register(registry);
+
+        this.frequencyCapHitTotal = Counter.builder("frequency_cap_hit_total")
+                .description("Requests where all candidates were frequency capped")
+                .register(registry);
+
+        this.budgetExhaustedTotal = Counter.builder("budget_exhausted_total")
+                .description("Requests where winner budget was exhausted")
+                .register(registry);
+
+        // Fill rate as a gauge — THE core business metric
+        registry.gauge("bid_fill_rate", this, m -> {
+            long total = m.totalRequests.get();
+            return total == 0 ? 0.0 : (double) m.totalBids.get() / total;
+        });
+    }
+
+    public void recordRequest() {
+        bidRequestsTotal.increment();
+        totalRequests.incrementAndGet();
+    }
+
+    public void recordBid(long latencyNanos) {
+        bidResponsesBid.increment();
+        totalBids.incrementAndGet();
+        bidLatency.record(latencyNanos, TimeUnit.NANOSECONDS);
+    }
+
+    public void recordNoBid(String reason, long latencyNanos) {
+        if ("TIMEOUT".equals(reason)) {
+            bidResponsesTimeout.increment();
+        } else {
+            bidResponsesNoBid.increment();
+        }
+        bidLatency.record(latencyNanos, TimeUnit.NANOSECONDS);
+    }
+
+    public void recordError(long latencyNanos) {
+        bidResponsesError.increment();
+        bidLatency.record(latencyNanos, TimeUnit.NANOSECONDS);
+    }
+
+    public void recordStageLatency(String stageName, long latencyNanos) {
+        Timer.builder("pipeline_stage_latency_seconds")
+                .tag("stage", stageName)
+                .register(registry)
+                .record(latencyNanos, TimeUnit.NANOSECONDS);
+    }
+
+    public void recordFrequencyCapHit() {
+        frequencyCapHitTotal.increment();
+    }
+
+    public void recordBudgetExhausted() {
+        budgetExhaustedTotal.increment();
+    }
+}

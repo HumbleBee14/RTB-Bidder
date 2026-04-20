@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rtb.event.EventPublisher;
 import com.rtb.event.events.BidEvent;
 import com.rtb.frequency.FrequencyCapper;
+import com.rtb.metrics.BidMetrics;
 import com.rtb.model.AdCandidate;
 import com.rtb.model.BidRequest;
 import com.rtb.model.NoBidReason;
@@ -29,22 +30,25 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
     private final BidPipeline pipeline;
     private final FrequencyCapper frequencyCapper;
     private final EventPublisher eventPublisher;
-    // Post-response work (Redis freq recording) offloaded from event loop
+    private final BidMetrics bidMetrics;
     private final ExecutorService postResponseExecutor = Executors.newSingleThreadExecutor(
             r -> new Thread(r, "post-response"));
 
     public BidRequestHandler(ObjectMapper objectMapper, BidPipeline pipeline,
-                             FrequencyCapper frequencyCapper, EventPublisher eventPublisher) {
+                             FrequencyCapper frequencyCapper, EventPublisher eventPublisher,
+                             BidMetrics bidMetrics) {
         this.objectMapper = objectMapper;
         this.pipeline = pipeline;
         this.frequencyCapper = frequencyCapper;
         this.eventPublisher = eventPublisher;
+        this.bidMetrics = bidMetrics;
     }
 
     @Override
     public void handle(RoutingContext ctx) {
         long startNanos = System.nanoTime();
         String requestId = UUID.randomUUID().toString();
+        bidMetrics.recordRequest();
 
         try {
             Buffer body = ctx.body().buffer();
@@ -72,8 +76,9 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
                     .setStatusCode(200)
                     .end(responseJson);
 
-            // Capture latency BEFORE any post-response work
-            long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
+            long latencyNanos = System.nanoTime() - startNanos;
+            long latencyMs = latencyNanos / 1_000_000;
+            bidMetrics.recordBid(latencyNanos);
 
             // ALL post-response work offloaded from event loop — Redis + Kafka never block HTTP
             String userId = request.userId();
@@ -97,7 +102,9 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
 
     private void noBid(RoutingContext ctx, String requestId, String userId,
                        NoBidReason reason, long startNanos) {
-        long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
+        long latencyNanos = System.nanoTime() - startNanos;
+        long latencyMs = latencyNanos / 1_000_000;
+        bidMetrics.recordNoBid(reason.name(), latencyNanos);
         ctx.response()
                 .putHeader("X-NoBid-Reason", reason.name())
                 .setStatusCode(204)

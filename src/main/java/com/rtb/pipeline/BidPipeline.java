@@ -1,6 +1,7 @@
 package com.rtb.pipeline;
 
 import com.rtb.config.PipelineConfig;
+import com.rtb.metrics.BidMetrics;
 import com.rtb.model.BidRequest;
 import com.rtb.model.NoBidReason;
 import org.slf4j.Logger;
@@ -16,10 +17,12 @@ public final class BidPipeline {
 
     private final List<PipelineStage> stages;
     private final long slaBudgetNanos;
+    private final BidMetrics metrics;
 
-    public BidPipeline(List<PipelineStage> stages, PipelineConfig config) {
+    public BidPipeline(List<PipelineStage> stages, PipelineConfig config, BidMetrics metrics) {
         this.stages = List.copyOf(stages);
         this.slaBudgetNanos = TimeUnit.MILLISECONDS.toNanos(config.maxLatencyMs());
+        this.metrics = metrics;
     }
 
     public BidContext execute(BidRequest request, long startNanos) {
@@ -46,8 +49,11 @@ public final class BidPipeline {
                 break;
             }
 
+            long stageElapsedNanos = System.nanoTime() - stageStart;
+            metrics.recordStageLatency(stage.name(), stageElapsedNanos);
+
             if (timing != null) {
-                long elapsedMicros = (System.nanoTime() - stageStart) / 1_000;
+                long elapsedMicros = stageElapsedNanos / 1_000;
                 if (timing.length() > 0) timing.append(", ");
                 timing.append(stage.name()).append(": ").append(elapsedMicros / 1000)
                         .append('.').append(String.valueOf(elapsedMicros % 1000 + 1000).substring(1))
@@ -55,13 +61,11 @@ public final class BidPipeline {
             }
         }
 
-        // Post-loop SLA check — catches last stage exceeding deadline
         if (!ctx.isAborted() && ctx.remainingNanos() <= 0) {
             ctx.abort(NoBidReason.TIMEOUT);
             logger.warn("SLA timeout after pipeline completed");
         }
 
-        // Null response guard — pipeline ran but no stage set a response
         if (!ctx.isAborted() && ctx.getResponse() == null) {
             ctx.abort(NoBidReason.INTERNAL_ERROR);
             logger.error("Pipeline completed but no response was set");

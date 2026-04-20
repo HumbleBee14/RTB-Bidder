@@ -18,15 +18,17 @@ public final class BidPipeline {
     private final List<PipelineStage> stages;
     private final long slaBudgetNanos;
     private final BidMetrics metrics;
+    private final BidContextPool contextPool;
 
     public BidPipeline(List<PipelineStage> stages, PipelineConfig config, BidMetrics metrics) {
         this.stages = List.copyOf(stages);
         this.slaBudgetNanos = TimeUnit.MILLISECONDS.toNanos(config.maxLatencyMs());
         this.metrics = metrics;
+        this.contextPool = new BidContextPool(256);
     }
 
     public BidContext execute(BidRequest request, long startNanos) {
-        BidContext ctx = new BidContext(request, startNanos, startNanos + slaBudgetNanos);
+        BidContext ctx = contextPool.acquire(request, startNanos, startNanos + slaBudgetNanos);
         StringBuilder timing = logger.isInfoEnabled() ? new StringBuilder() : null;
 
         for (PipelineStage stage : stages) {
@@ -83,5 +85,10 @@ public final class BidPipeline {
         }
 
         return ctx;
+    }
+
+    /** Return context to pool after handler is done reading it. */
+    public void release(BidContext ctx) {
+        contextPool.release(ctx);
     }
 }

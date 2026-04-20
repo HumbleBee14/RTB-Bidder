@@ -57,7 +57,7 @@ public final class TrackingHandler {
         ctx.response()
                 .putHeader("Content-Type", "application/json")
                 .setStatusCode(200)
-                .end("{\"status\":\"click_tracked\",\"bid_id\":\"" + bidId + "\"}");
+                .end("{\"status\":\"click_tracked\",\"bid_id\":\"" + bidId.replace("\"", "\\\"") + "\"}");
 
         // TODO: look up userId, campaignId, slotId from bid cache (keyed by bidId)
         eventPublisher.publishClick(new ClickEvent(bidId, null, null, null, Instant.now()));

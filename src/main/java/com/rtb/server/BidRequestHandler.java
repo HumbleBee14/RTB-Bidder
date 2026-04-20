@@ -17,6 +17,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Handles bid requests — the hot path. */
 public final class BidRequestHandler implements Handler<RoutingContext> {
@@ -27,6 +29,9 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
     private final BidPipeline pipeline;
     private final FrequencyCapper frequencyCapper;
     private final EventPublisher eventPublisher;
+    // Post-response work (Redis freq recording) offloaded from event loop
+    private final ExecutorService postResponseExecutor = Executors.newSingleThreadExecutor(
+            r -> new Thread(r, "post-response"));
 
     public BidRequestHandler(ObjectMapper objectMapper, BidPipeline pipeline,
                              FrequencyCapper frequencyCapper, EventPublisher eventPublisher) {
@@ -67,18 +72,22 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
                     .setStatusCode(200)
                     .end(responseJson);
 
-            // Capture pipeline latency BEFORE post-response work
+            // Capture latency BEFORE any post-response work
             long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
 
-            // Post-response: frequency recording + event publishing (async, non-blocking)
-            for (AdCandidate winner : bidCtx.getSlotWinners().values()) {
-                frequencyCapper.recordImpression(request.userId(), winner.getCampaign().id());
-            }
-
-            List<BidEvent.SlotBidInfo> slotBids = bidCtx.getResponse().bids().stream()
-                    .map(b -> new BidEvent.SlotBidInfo(b.slotId(), b.adId(), b.price()))
-                    .toList();
-            eventPublisher.publishBid(BidEvent.bid(requestId, request.userId(), slotBids, latencyMs));
+            // ALL post-response work offloaded from event loop — Redis + Kafka never block HTTP
+            String userId = request.userId();
+            var slotWinners = bidCtx.getSlotWinners();
+            var bids = bidCtx.getResponse().bids();
+            postResponseExecutor.submit(() -> {
+                for (AdCandidate winner : slotWinners.values()) {
+                    frequencyCapper.recordImpression(userId, winner.getCampaign().id());
+                }
+                List<BidEvent.SlotBidInfo> slotBids = bids.stream()
+                        .map(b -> new BidEvent.SlotBidInfo(b.slotId(), b.adId(), b.price()))
+                        .toList();
+                eventPublisher.publishBid(BidEvent.bid(requestId, userId, slotBids, latencyMs));
+            });
 
         } catch (Exception e) {
             logger.error("Failed to process bid request", e);

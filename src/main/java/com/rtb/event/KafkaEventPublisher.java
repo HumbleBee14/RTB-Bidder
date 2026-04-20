@@ -16,12 +16,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Properties;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * Publishes events to Kafka asynchronously. Fire-and-forget — never blocks the bid path.
+ * Publishes events to Kafka on a dedicated background thread.
  *
- * Uses async send with a callback that logs errors but doesn't retry or throw.
- * Batching and compression are configured for throughput over latency.
+ * All serialization and Kafka send() calls happen OFF the Vert.x event loop.
+ * This guarantees the bid path is never blocked by Kafka backpressure,
+ * buffer full conditions, or slow metadata fetches.
  */
 public final class KafkaEventPublisher implements EventPublisher, AutoCloseable {
 
@@ -29,6 +32,7 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
 
     private final KafkaProducer<String, String> producer;
     private final ObjectMapper objectMapper;
+    private final ExecutorService executor;
     private final String bidTopic;
     private final String winTopic;
     private final String impressionTopic;
@@ -44,13 +48,10 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, config.get("kafka.bootstrap.servers", "localhost:9092"));
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
         props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        // Async batching for throughput — not latency-sensitive (events are post-response)
         props.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384);
         props.put(ProducerConfig.LINGER_MS_CONFIG, 10);
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4");
-        // Fire-and-forget: acks=1 (leader only, no replica wait)
         props.put(ProducerConfig.ACKS_CONFIG, "1");
-        // Fail fast on startup if Kafka is unreachable (default is 60s which blocks main thread)
         props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5000);
 
         this.producer = new KafkaProducer<>(props);
@@ -58,37 +59,44 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
-        logger.info("KafkaEventPublisher connected: {} | topics: {}, {}, {}, {}",
+        // Single-threaded executor — events are ordered, no thread contention on producer
+        this.executor = Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "event-publisher");
+            t.setDaemon(true);
+            return t;
+        });
+
+        logger.info("KafkaEventPublisher connected: {} | topics: {}, {}, {}, {} | offloaded to background thread",
                 props.get(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG),
                 bidTopic, winTopic, impressionTopic, clickTopic);
     }
 
     @Override
     public void publishBid(BidEvent event) {
-        publish(bidTopic, event.requestId(), event);
+        executor.submit(() -> publish(bidTopic, event.requestId(), event));
     }
 
     @Override
     public void publishWin(WinEvent event) {
-        publish(winTopic, event.bidId(), event);
+        executor.submit(() -> publish(winTopic, event.bidId(), event));
     }
 
     @Override
     public void publishImpression(ImpressionEvent event) {
-        publish(impressionTopic, event.bidId(), event);
+        executor.submit(() -> publish(impressionTopic, event.bidId(), event));
     }
 
     @Override
     public void publishClick(ClickEvent event) {
-        publish(clickTopic, event.bidId(), event);
+        executor.submit(() -> publish(clickTopic, event.bidId(), event));
     }
 
+    /** Runs on the background executor thread — never on the Vert.x event loop. */
     private void publish(String topic, String key, Object event) {
         try {
             String json = objectMapper.writeValueAsString(event);
             ProducerRecord<String, String> record = new ProducerRecord<>(topic, key, json);
-            // TODO: Phase 10 — add circuit breaker + fallback (write to local file if Kafka down)
-            // For billing-critical WinEvents, consider acks=all + retry for durability
+            // TODO: Phase 10 — circuit breaker + fallback for WinEvents (billing-critical)
             producer.send(record, (metadata, exception) -> {
                 if (exception != null) {
                     logger.error("Failed to publish to topic {} key={}", topic, key, exception);
@@ -101,6 +109,7 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
 
     @Override
     public void close() {
+        executor.shutdown();
         producer.flush();
         producer.close();
         logger.info("KafkaEventPublisher closed");

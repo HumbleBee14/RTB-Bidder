@@ -120,6 +120,43 @@ Published when the exchange tells us our bid won. `clearingPrice` may differ fro
 
 ## Performance Decisions and Reasoning
 
+### Why event publishing is offloaded to a background thread
+
+Vert.x uses a single event loop thread for ALL HTTP requests. If anything blocks this thread, every request queues up. Kafka's `producer.send()` is "async" but can block in two scenarios:
+
+1. **Buffer full** — producer has a 32MB buffer. At 50K events/sec, if Kafka is slow, `send()` blocks up to `max.block.ms` (5s) waiting for buffer space
+2. **Metadata fetch** — first send to a new topic blocks while Kafka returns partition metadata
+
+Even `objectMapper.writeValueAsString()` is synchronous CPU work (~0.1ms) on the caller thread.
+
+**Solution**: all event publishing runs on a dedicated single-threaded `ExecutorService`:
+
+```java
+// Event loop thread (handles HTTP):
+eventPublisher.publishBid(event);           // ← returns immediately (submits to executor)
+
+// Background thread (handles Kafka):
+executor.submit(() -> publish(topic, key, event));  // ← serialization + send happen here
+```
+
+The event loop thread never touches Kafka. Zero blocking risk regardless of Kafka health, buffer state, or serialization cost. The background thread is single-threaded (not a pool) to preserve event ordering and avoid thread contention on the Kafka producer.
+
+### General principle: NOTHING blocks the event loop after response.end()
+
+Frequency capper's `recordImpression()` calls Redis via sync Lua script. Even though it runs "after" `response.end()`, it still runs ON the event loop thread. Vert.x sends the HTTP response but the thread is still occupied — if Redis takes 5ms, the next incoming request waits 5ms.
+
+**Fix**: ALL post-response work runs on a dedicated background thread:
+
+```java
+ctx.response().end(responseJson);              // ← event loop sends response, returns
+postResponseExecutor.submit(() -> {            // ← background thread handles everything else
+    frequencyCapper.recordImpression(...);     // sync Redis — blocks background thread, not event loop
+    eventPublisher.publishBid(...);            // submits to Kafka executor
+});
+```
+
+**This pattern applies everywhere**: any I/O that happens after the response (Redis writes, Kafka publishes, metric updates) must be offloaded. The event loop thread should do ONE thing: receive request → pipeline → send response → return immediately.
+
 ### Why events are published AFTER response.end(), not before
 
 ```java

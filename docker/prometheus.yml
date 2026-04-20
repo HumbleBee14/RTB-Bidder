@@ -1,6 +1,6 @@
 global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
+  scrape_interval: 10s
+  evaluation_interval: 10s
 
 scrape_configs:
   - job_name: 'rtb-bidder'
@@ -8,6 +8,6 @@ scrape_configs:
     # host.docker.internal resolves to the host machine from inside Docker
     # This is where the bidder runs (not inside Docker)
     static_configs:
+      # Prometheus auto-adds instance=<host:port> — don't override it.
+      # Add custom labels under a different name if needed (e.g., bidder_id).
       - targets: ['host.docker.internal:8080']
-        labels:
-          instance: 'bidder-1'

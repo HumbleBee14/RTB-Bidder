@@ -66,8 +66,10 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Defaults are dev-only. Override via env vars or .env file:
+      #   GRAFANA_ADMIN_USER=myuser GRAFANA_ADMIN_PASSWORD=mypass docker compose up
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/rtb-bidder.json
     volumes:
       - grafana-data:/var/lib/grafana

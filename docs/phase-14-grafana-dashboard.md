@@ -36,7 +36,7 @@ Pre-configured Grafana dashboard with 10 panels showing live bidder metrics, aut
 | Panel | Type | PromQL | Why it matters |
 |-------|------|--------|----------------|
 | **Bid QPS** | Time series | `rate(bid_requests_total[1m])` | The fundamental throughput metric. If QPS drops, something is wrong upstream (exchange stopped sending) or downstream (bidder is crashing). |
-| **Bid vs No-Bid Rate** | Stacked area | `rate(bid_responses_total{outcome="bid"}[1m])` | Shows the breakdown of responses. Stacked area reveals if no-bids are increasing (targeting too narrow? budgets exhausted?) or errors are growing. |
+| **Bid vs No-Bid Rate** | Stacked area | 4 series: `rate(bid_responses_total{outcome="bid"\|"nobid"\|"timeout"\|"error"}[1m])` | Shows the breakdown of responses. Stacked area reveals if no-bids are increasing (targeting too narrow? budgets exhausted?) or errors are growing. |
 | **Fill Rate** | Gauge | `bid_fill_rate` | THE business metric. "What % of requests do we monetize?" Red below 15%, yellow 15-30%, green above 30%. If fill rate drops, revenue drops. |
 
 ### Row 2: Latency & Errors
@@ -153,16 +153,41 @@ for i in $(seq 1 100); do
 done
 ```
 
-### 4. Open the dashboard
+### 4. Open the dashboard in the browser
 
+**Grafana** — the main dashboard:
 ```
-Grafana:    http://localhost:3000  (admin / admin)
-Prometheus: http://localhost:9090  (no auth)
+URL:      http://localhost:3000
+Login:    admin / admin   (or whatever GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD you set)
 ```
 
-The RTB Bidder dashboard loads automatically as the home dashboard. Data appears within 15-30 seconds (one Prometheus scrape interval).
+On first login Grafana asks you to change the password — skip it (click "Skip") for local dev.
 
-### 5. Verify Prometheus is scraping
+The **"RTB Bidder — Live Dashboard"** loads automatically as the home dashboard. If not, navigate:
+- Click the 3-line menu (top-left) → **Dashboards** → **Browse**
+- Click **RTB Bidder — Live Dashboard**
+- Or direct link: `http://localhost:3000/d/rtb-bidder-main`
+
+Dashboard controls:
+- **Top-right time picker**: default "Last 30 minutes". Change to "Last 5 minutes" for real-time view during testing
+- **Refresh dropdown** (top-right): auto-refresh every 10s (already set)
+- **Panel title → three dots → Edit**: inspect/tweak the PromQL for any panel
+
+Data appears within 10-20 seconds (one Prometheus scrape interval). If all panels say "No data":
+- Check the bidder is running: `curl http://localhost:8080/health`
+- Check Prometheus sees the target: `http://localhost:9090/targets` — should show bidder "UP"
+- Check you've sent traffic (counters need traffic to move)
+
+**Prometheus** — raw query UI:
+```
+URL:      http://localhost:9090     (no auth)
+Targets:  http://localhost:9090/targets
+Graph:    http://localhost:9090/graph
+```
+
+Useful for debugging "why doesn't the dashboard show X?". Type any metric name (e.g., `bid_requests_total`) and hit Execute — shows the raw time series.
+
+### 5. Verify Prometheus is scraping (CLI)
 
 ```bash
 # Check target health
@@ -171,6 +196,9 @@ curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"'
 
 # Query a metric
 curl -s "http://localhost:9090/api/v1/query?query=bid_requests_total"
+
+# List all metric names exposed by the bidder
+curl -s http://localhost:8080/metrics | grep -v '^#' | awk '{print $1}' | sort -u | head -30
 ```
 
 ## What production dashboards look like vs ours

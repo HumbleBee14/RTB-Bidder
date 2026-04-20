@@ -168,22 +168,6 @@
       },
       "targets": [
         {
-          "expr": "rate(pipeline_stage_latency_seconds_sum{stage=\"RequestValidation\"}[1m]) / rate(pipeline_stage_latency_seconds_count{stage=\"RequestValidation\"}[1m]) * 1000",
-          "legendFormat": "Validation"
-        },
-        {
-          "expr": "rate(pipeline_stage_latency_seconds_sum{stage=\"UserEnrichment\"}[1m]) / rate(pipeline_stage_latency_seconds_count{stage=\"UserEnrichment\"}[1m]) * 1000",
-          "legendFormat": "UserEnrichment"
-        },
-        {
-          "expr": "rate(pipeline_stage_latency_seconds_sum{stage=\"CandidateRetrieval\"}[1m]) / rate(pipeline_stage_latency_seconds_count{stage=\"CandidateRetrieval\"}[1m]) * 1000",
-          "legendFormat": "CandidateRetrieval"
-        },
-        {
-          "expr": "rate(pipeline_stage_latency_seconds_sum{stage=\"FrequencyCap\"}[1m]) / rate(pipeline_stage_latency_seconds_count{stage=\"FrequencyCap\"}[1m]) * 1000",
-          "legendFormat": "FrequencyCap"
-        },
-        {
           "expr": "rate(pipeline_stage_latency_seconds_sum[1m]) / rate(pipeline_stage_latency_seconds_count[1m]) * 1000",
           "legendFormat": "{{stage}}"
         }
@@ -230,9 +214,14 @@
             ]
           },
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "CLOSED", "color": "green" } } },
-            { "type": "value", "options": { "1": { "text": "OPEN", "color": "red" } } },
-            { "type": "value", "options": { "2": { "text": "HALF_OPEN", "color": "yellow" } } }
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "CLOSED", "color": "green" },
+                "1": { "text": "OPEN", "color": "red" },
+                "2": { "text": "HALF_OPEN", "color": "yellow" }
+              }
+            }
           ]
         },
         "overrides": []
@@ -273,9 +262,9 @@
       ]
     },
     {
-      "title": "GC Pause Time",
+      "title": "GC Pause Time (seconds/sec)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 28 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": {
@@ -288,11 +277,27 @@
       "targets": [
         {
           "expr": "rate(jvm_gc_pause_seconds_sum[1m])",
-          "legendFormat": "GC Pause Rate (sec/sec)"
+          "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "title": "GC Pauses/min",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 28 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "short"
         },
+        "overrides": []
+      },
+      "targets": [
         {
           "expr": "increase(jvm_gc_pause_seconds_count[1m])",
-          "legendFormat": "GC Pauses/min"
+          "legendFormat": "{{action}}"
         }
       ]
     }

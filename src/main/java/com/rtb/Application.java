@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.rtb.config.AppConfig;
 import com.rtb.config.PipelineConfig;
 import com.rtb.config.RedisConfig;
+import com.rtb.resilience.ResilientRedis;
+import com.rtb.resilience.ResilientEventPublisher;
 import com.rtb.health.CompositeHealthCheck;
 import com.rtb.health.KafkaHealthCheck;
 import com.rtb.health.RedisHealthCheck;
@@ -83,18 +85,25 @@ public final class Application {
         }
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
+
+        // Resilience — circuit breakers on Redis (segments + frequency capping)
+        int cbFailureThreshold = config.getInt("resilience.circuit.failure.threshold", 5);
+        long cbCooldownMs = config.getLong("resilience.circuit.cooldown.ms", 10000);
+        ResilientRedis resilientRedis = new ResilientRedis(
+                userSegmentRepo, frequencyCapper, cbFailureThreshold, cbCooldownMs);
+        logger.info("Circuit breakers: failureThreshold={}, cooldownMs={}", cbFailureThreshold, cbCooldownMs);
         BudgetMetrics budgetMetrics = new BudgetMetrics();
         BudgetPacer budgetPacer = createBudgetPacer(config, redisConfig, campaignRepo, budgetMetrics);
         if (budgetPacer instanceof AutoCloseable closeablePacer) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePacer), "shutdown-pacer"));
         }
 
-        // Pipeline stages — 8 stages, executed in order
+        // Pipeline stages — 8 stages, using resilient wrappers for external dependencies
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
-                new UserEnrichmentStage(userSegmentRepo),
+                new UserEnrichmentStage(resilientRedis),
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
-                new FrequencyCapStage(frequencyCapper),
+                new FrequencyCapStage(resilientRedis),
                 new ScoringStage(scorer),
                 new RankingStage(),
                 new BudgetPacingStage(budgetPacer),
@@ -114,14 +123,16 @@ public final class Application {
                 kafkaHealthCheck
         ));
 
-        // Event publishing
-        EventPublisher eventPublisher = createEventPublisher(config);
-        if (eventPublisher instanceof AutoCloseable closeablePublisher) {
+        // Event publishing — wrapped with circuit breaker
+        EventPublisher rawEventPublisher = createEventPublisher(config);
+        if (rawEventPublisher instanceof AutoCloseable closeablePublisher) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePublisher), "shutdown-events"));
         }
+        EventPublisher eventPublisher = new ResilientEventPublisher(
+                rawEventPublisher, cbFailureThreshold, cbCooldownMs);
 
-        // Handlers
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, frequencyCapper, eventPublisher, bidMetrics);
+        // Handlers — use resilient wrappers
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, resilientRedis, eventPublisher, bidMetrics);
         WinHandler winHandler = new WinHandler(objectMapper, eventPublisher);
         TrackingHandler trackingHandler = new TrackingHandler(eventPublisher);
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize,

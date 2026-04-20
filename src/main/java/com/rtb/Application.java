@@ -142,7 +142,7 @@ public final class Application {
         EventPublisher eventPublisher = new ResilientEventPublisher(rawEventPublisher, kafkaCircuitBreaker);
 
         // Handlers — use resilient wrappers
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, resilientRedis, eventPublisher, bidMetrics);
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(pipeline, resilientRedis, eventPublisher, bidMetrics);
         WinHandler winHandler = new WinHandler(objectMapper, eventPublisher);
         TrackingHandler trackingHandler = new TrackingHandler(eventPublisher);
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize,

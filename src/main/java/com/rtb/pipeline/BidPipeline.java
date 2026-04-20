@@ -61,11 +61,13 @@ public final class BidPipeline {
             }
         }
 
+        // Post-loop SLA check — catches last stage exceeding deadline
         if (!ctx.isAborted() && ctx.remainingNanos() <= 0) {
             ctx.abort(NoBidReason.TIMEOUT);
             logger.warn("SLA timeout after pipeline completed");
         }
 
+        // Null response guard — pipeline ran but no stage set a response
         if (!ctx.isAborted() && ctx.getResponse() == null) {
             ctx.abort(NoBidReason.INTERNAL_ERROR);
             logger.error("Pipeline completed but no response was set");

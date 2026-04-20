@@ -16,6 +16,8 @@ import com.rtb.pipeline.stages.RequestValidationStage;
 import com.rtb.pipeline.stages.ResponseBuildStage;
 import com.rtb.pipeline.stages.ScoringStage;
 import com.rtb.scoring.ABTestScorer;
+import com.rtb.scoring.CascadeScorer;
+import com.rtb.scoring.FeatureSchema;
 import com.rtb.scoring.FeatureWeightedScorer;
 import com.rtb.scoring.MLScorer;
 import com.rtb.scoring.Scorer;
@@ -113,20 +115,19 @@ public final class Application {
 
         Scorer scorer = switch (type) {
             case "ml" -> {
-                String modelPath = config.get("scoring.ml.model.path", "ml/pctr_model.onnx");
-                logger.info("Loading ML scorer from: {}", modelPath);
-                yield new MLScorer(modelPath);
+                yield createMLScorer(config);
             }
             case "abtest" -> {
-                String modelPath = config.get("scoring.ml.model.path", "ml/pctr_model.onnx");
                 int treatmentPct = config.getInt("scoring.abtest.treatment.percentage", 50);
-                logger.info("A/B test scorer: {}% ML ({}), {}% feature-weighted",
-                        treatmentPct, modelPath, 100 - treatmentPct);
-                yield new ABTestScorer(
-                        new FeatureWeightedScorer(),
-                        new MLScorer(modelPath),
-                        treatmentPct
-                );
+                MLScorer mlScorer = createMLScorer(config);
+                logger.info("A/B test: {}% ML, {}% feature-weighted", treatmentPct, 100 - treatmentPct);
+                yield new ABTestScorer(new FeatureWeightedScorer(), mlScorer, treatmentPct);
+            }
+            case "cascade" -> {
+                MLScorer mlScorer = createMLScorer(config);
+                double threshold = Double.parseDouble(config.get("scoring.cascade.threshold", "0.1"));
+                logger.info("Cascade: FeatureWeighted → ML (threshold: {})", threshold);
+                yield new CascadeScorer(new FeatureWeightedScorer(), mlScorer, threshold);
             }
             default -> {
                 logger.info("Using feature-weighted scorer (default)");
@@ -134,8 +135,15 @@ public final class Application {
             }
         };
 
-        logger.info("Scorer initialized: {}", scorer.getClass().getSimpleName());
+        logger.info("Scorer initialized: {}", scorer.name());
         return scorer;
+    }
+
+    private static MLScorer createMLScorer(AppConfig config) {
+        String modelPath = config.get("scoring.ml.model.path", "ml/pctr_model.onnx");
+        String schemaPath = config.get("scoring.ml.schema.path", "ml/feature_schema.json");
+        FeatureSchema schema = FeatureSchema.load(schemaPath);
+        return new MLScorer(modelPath, schema);
     }
 
     private static ObjectMapper createObjectMapper() {

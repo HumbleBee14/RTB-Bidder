@@ -73,7 +73,75 @@ Index    Feature                    Type
 [65]     campaign bid floor         float
 ```
 
-All features are pre-computed — UserProfile segments already fetched from Redis, AdContext already parsed from request. The feature vector is assembled from existing pipeline data, no additional I/O.
+Feature ordering is defined in `ml/feature_schema.json` — the single source of truth shared between Python training and Java serving. Neither hardcodes the list; both read from the same schema file. This prevents feature drift (training and serving seeing different feature orders).
+
+Ref: [IAB Content Taxonomy](https://iabtechlab.com/standards/content-taxonomy/) — industry standard for audience segment categories.
+
+## Cascade Scoring (Multi-Stage Ranking)
+
+Production ad-tech doesn't run one scorer. It cascades:
+
+```
+Stage 1: FeatureWeightedScorer (fast, 0.01ms/candidate)
+  → 100 candidates in → scores all → prunes those below threshold
+
+Stage 2: MLScorer (accurate, 1ms/candidate)
+  → only candidates that passed stage1 threshold → re-scores → final ranking
+
+Total: 100×0.01 + 20×1 = 21ms   (vs 100×1 = 100ms with ML-only)
+```
+
+Our `CascadeScorer` implements this:
+- Stage1 scores the candidate with the cheap formula
+- If score < threshold → return -1.0 (pruned, RankingStage excludes it)
+- If score >= threshold → re-score with stage2 (ML model)
+- Final score comes from stage2 (accurate), stage1 is only for pruning
+
+Pipeline log shows the full chain: `Scoring(Cascade(FeatureWeightedScorer→MLScorer)): 1.2ms`
+
+```properties
+# Config
+scoring.type=cascade
+scoring.cascade.threshold=0.1
+```
+
+### All scoring strategies
+
+| Config value | What runs | Use case |
+|-------------|-----------|----------|
+| `feature-weighted` | Formula only | Default, no ML dependency |
+| `ml` | ONNX model only | When model is proven and fast enough |
+| `abtest` | Split traffic between formula and ML | Testing which performs better |
+| `cascade` | Formula filters → ML re-scores survivors | Production scale (100+ candidates) |
+
+All implement `Scorer` interface. Pipeline, stages, ranking — nothing changes. One config line swaps the strategy.
+
+### Composability — scorers are building blocks
+
+Every scorer implements `Scorer`. Any scorer can wrap or be wrapped by another:
+
+```java
+// Formula only
+Scorer scorer = new FeatureWeightedScorer();
+
+// ML only
+Scorer scorer = new MLScorer(model, schema);
+
+// A/B test: 50% formula, 50% ML
+Scorer scorer = new ABTestScorer(new FeatureWeightedScorer(), new MLScorer(...), 50);
+
+// Cascade: formula prunes → ML re-scores
+Scorer scorer = new CascadeScorer(new FeatureWeightedScorer(), new MLScorer(...), 0.1);
+
+// A/B test between formula vs cascade (advanced)
+Scorer scorer = new ABTestScorer(
+    new FeatureWeightedScorer(),
+    new CascadeScorer(new FeatureWeightedScorer(), new MLScorer(...), 0.1),
+    50
+);
+```
+
+Adding a new scorer (e.g. `DeepLearningScorer`, `ContextualScorer`) = implement `Scorer` interface + one line in `Application.java`. No pipeline changes, no stage changes, no ranking changes.
 
 ## Performance Considerations
 
@@ -118,11 +186,13 @@ ABTestScorer splits traffic deterministically by user_id hash:
 
 | File | Purpose |
 |------|---------|
-| `ml/train_pctr_model.py` | Python: generate data, train XGBoost, export ONNX |
+| `ml/feature_schema.json` | Single source of truth — feature definitions for training and serving |
+| `ml/train_pctr_model.py` | Python: reads schema, generates data, trains XGBoost, exports ONNX |
 | `ml/pctr_model.onnx` | Trained model artifact (66 features → pCTR) |
-| `ml/feature_spec.txt` | Feature ordering metadata |
-| `scoring/MLScorer.java` | ONNX Runtime inference, feature vector assembly |
+| `scoring/FeatureSchema.java` | Loads feature_schema.json at startup |
+| `scoring/MLScorer.java` | ONNX Runtime inference, feature vector from schema |
 | `scoring/ABTestScorer.java` | Deterministic A/B split between two scorers |
+| `scoring/CascadeScorer.java` | Stage1 (fast) filters → stage2 (accurate) re-scores |
 | `model/Campaign.java` | Added `valuePerClick` field |
 
 ## Test Results and Analysis

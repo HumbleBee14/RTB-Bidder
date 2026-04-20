@@ -39,6 +39,10 @@ public final class RankingStage implements PipelineStage {
                                           Set<String> usedCampaigns) {
         AdCandidate best = null;
         for (AdCandidate candidate : candidates) {
+            // Skip pruned candidates (score < 0 from CascadeScorer)
+            if (candidate.getScore() < 0) {
+                continue;
+            }
             // Skip campaigns already won another slot (dedup)
             if (usedCampaigns.contains(candidate.getCampaign().id())) {
                 continue;

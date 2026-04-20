@@ -1,6 +1,8 @@
 package com.rtb.server;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rtb.event.EventPublisher;
+import com.rtb.event.events.WinEvent;
 import com.rtb.model.WinNotification;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
@@ -8,15 +10,19 @@ import io.vertx.ext.web.RoutingContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
+
 /** Handles win notifications from the exchange. */
 public final class WinHandler implements Handler<RoutingContext> {
 
     private static final Logger logger = LoggerFactory.getLogger(WinHandler.class);
 
     private final ObjectMapper objectMapper;
+    private final EventPublisher eventPublisher;
 
-    public WinHandler(ObjectMapper objectMapper) {
+    public WinHandler(ObjectMapper objectMapper, EventPublisher eventPublisher) {
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -37,6 +43,10 @@ public final class WinHandler implements Handler<RoutingContext> {
                     .putHeader("Content-Type", "application/json")
                     .setStatusCode(200)
                     .end("{\"status\":\"acknowledged\"}");
+
+            eventPublisher.publishWin(new WinEvent(
+                    notification.bidId(), notification.campaignId(),
+                    notification.clearingPrice(), Instant.now()));
 
         } catch (Exception e) {
             logger.error("Failed to process win notification", e);

@@ -9,6 +9,9 @@ import com.rtb.config.RedisConfig;
 import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
 import com.rtb.frequency.RedisFrequencyCapper;
+import com.rtb.pacing.BudgetPacer;
+import com.rtb.pacing.LocalBudgetPacer;
+import com.rtb.pipeline.stages.BudgetPacingStage;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
 import com.rtb.pipeline.stages.FrequencyCapStage;
 import com.rtb.pipeline.stages.RankingStage;
@@ -67,8 +70,9 @@ public final class Application {
         }
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
+        BudgetPacer budgetPacer = new LocalBudgetPacer(campaignRepo);
 
-        // Pipeline stages — executed in order
+        // Pipeline stages — 8 stages, executed in order
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
                 new UserEnrichmentStage(userSegmentRepo),
@@ -76,6 +80,7 @@ public final class Application {
                 new FrequencyCapStage(frequencyCapper),
                 new ScoringStage(scorer),
                 new RankingStage(),
+                new BudgetPacingStage(budgetPacer),
                 new ResponseBuildStage(baseUrl)
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);

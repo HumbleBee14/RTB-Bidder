@@ -24,9 +24,9 @@ k6 load test scripts (baseline, ramp, spike), Redis seed script (10K users with 
 
 ### 3. Spike (sudden burst)
 
-**What**: Stable baseline, then sudden 10x traffic increase, then drop back to baseline. Our test: 500 RPS → 5000 RPS in 5 seconds → hold 30 seconds → drop back.
+**What**: Stable baseline, then sudden 10x traffic increase, then drop back to baseline. Our test: 50 RPS → 500 RPS in 5 seconds → hold 30 seconds → drop back.
 
-**Why**: Ad exchanges send burst traffic when popular pages load (Super Bowl homepage, breaking news). Your bidder sees 500 RPS → 5000 RPS in under a second. What you watch:
+**Why**: Ad exchanges send burst traffic when popular pages load (Super Bowl homepage, breaking news). Your bidder sees stable traffic → 10x in under a second. The baseline must be within capacity (50 RPS, not 500) so you can observe the transition from "healthy" to "under pressure" and measure recovery time. If your baseline is already past saturation, you can't distinguish spike behavior from normal overload. What you watch:
 - Does the system crash? (Connection resets, OOM)
 - Does p99 blow past the SLA deadline? (50ms in our case)
 - How fast does p99 recover after the spike ends?
@@ -155,15 +155,21 @@ Three logging appenders doing synchronous file I/O on every request on the event
 
 | File | Purpose |
 |------|---------|
+| `load-test/helpers.js` | Shared request generation, metrics, and response checking |
 | `load-test/k6-baseline.js` | Constant 100 RPS for 2 minutes — stable latency measurement |
 | `load-test/k6-ramp.js` | Ramp 50 → 1000 RPS — find saturation point |
-| `load-test/k6-spike.js` | 500 → 5000 RPS spike — burst resilience test |
+| `load-test/k6-spike.js` | 50 → 500 RPS spike — burst resilience test |
 | `load-test/sample-bid-request.json` | Reference bid request format |
 | `docker/init-redis.sh` | Seed 10K users with random segments into Redis |
+| `src/main/resources/logback.xml` | Configurable log level for load tests |
+
+**Generated locally** (gitignored — regenerated per environment):
+
+| File | Purpose |
+|------|---------|
 | `results/baseline-results.txt` | Raw k6 baseline output |
 | `results/ramp-results.txt` | Raw k6 ramp output |
 | `results/gc.log` | ZGC log with pause times |
-| `src/main/resources/logback.xml` | Configurable log level for load tests |
 
 ## How to run (step by step)
 
@@ -229,6 +235,10 @@ echo "Warmup done"
 
 ```bash
 # Install k6 if needed: https://grafana.com/docs/k6/latest/set-up/install-k6/
+
+# Default target: http://localhost:8080
+# Override with -e TARGET_URL for remote testing (e.g., from MacBook to Windows):
+#   k6 run -e TARGET_URL=http://192.168.1.x:8080 load-test/k6-baseline.js
 
 # Baseline — stable latency at 100 RPS (2 minutes)
 k6 run --summary-trend-stats="avg,min,med,max,p(90),p(95),p(99),p(99.9)" \

@@ -8,7 +8,6 @@ import com.rtb.event.EventPublisher;
 import com.rtb.event.events.BidEvent;
 import com.rtb.frequency.FrequencyCapper;
 import com.rtb.metrics.BidMetrics;
-import com.rtb.model.AdCandidate;
 import com.rtb.model.BidRequest;
 import com.rtb.model.NoBidReason;
 import com.rtb.pipeline.BidContext;
@@ -64,10 +63,17 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
                 return;
             }
 
-            // Streaming parse — no ObjectMapper, no intermediate tree
+            // Streaming parse — token-by-token, no ObjectMapper tree
             BidRequest request;
-            try (JsonParser parser = jsonFactory.createParser(body.getBytes())) {
+            try (JsonParser parser = jsonFactory.createParser(
+                    body.getByteBuf().array(), body.getByteBuf().arrayOffset(),
+                    body.getByteBuf().readableBytes())) {
                 request = requestCodec.parse(parser);
+            } catch (UnsupportedOperationException e) {
+                // Direct buffer without array backing — fall back to getBytes()
+                try (JsonParser parser = jsonFactory.createParser(body.getBytes())) {
+                    request = requestCodec.parse(parser);
+                }
             }
 
             bidCtx = pipeline.execute(request, startNanos);
@@ -93,24 +99,25 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
             long latencyMs = latencyNanos / 1_000_000;
             bidMetrics.recordBid(latencyNanos);
 
-            // Post-response work offloaded from event loop
+            // Extract data needed for post-response BEFORE releasing context to pool
             String userId = request.userId();
-            var slotWinners = bidCtx.getSlotWinners();
-            var bids = bidCtx.getResponse().bids();
-            BidContext ctxToRelease = bidCtx;
-            bidCtx = null; // prevent finally from releasing — post-response thread owns it now
+            List<String[]> winnerIds = bidCtx.getSlotWinners().values().stream()
+                    .map(w -> new String[]{userId, w.getCampaign().id()})
+                    .toList();
+            List<BidEvent.SlotBidInfo> slotBids = bidCtx.getResponse().bids().stream()
+                    .map(b -> new BidEvent.SlotBidInfo(b.slotId(), b.adId(), b.price()))
+                    .toList();
+
+            // Release context to pool immediately — don't hold it for post-response
+            pipeline.release(bidCtx);
+            bidCtx = null;
+
+            // Post-response work uses extracted data only — no context reference
             postResponseExecutor.submit(() -> {
-                try {
-                    for (AdCandidate winner : slotWinners.values()) {
-                        frequencyCapper.recordImpression(userId, winner.getCampaign().id());
-                    }
-                    List<BidEvent.SlotBidInfo> slotBids = bids.stream()
-                            .map(b -> new BidEvent.SlotBidInfo(b.slotId(), b.adId(), b.price()))
-                            .toList();
-                    eventPublisher.publishBid(BidEvent.bid(requestId, userId, slotBids, latencyMs));
-                } finally {
-                    pipeline.release(ctxToRelease);
+                for (String[] ids : winnerIds) {
+                    frequencyCapper.recordImpression(ids[0], ids[1]);
                 }
+                eventPublisher.publishBid(BidEvent.bid(requestId, userId, slotBids, latencyMs));
             });
 
         } catch (Exception e) {

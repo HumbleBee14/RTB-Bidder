@@ -34,9 +34,9 @@ public final class BidRequestCodec {
             switch (field) {
                 case "user_id" -> userId = parser.getText();
                 case "context_text" -> contextText = parser.getText();
-                case "app" -> app = parseApp(parser);
-                case "device" -> device = parseDevice(parser);
-                case "ad_slots" -> adSlots = parseAdSlots(parser);
+                case "app" -> app = parser.currentToken() == JsonToken.START_OBJECT ? parseApp(parser) : null;
+                case "device" -> device = parser.currentToken() == JsonToken.START_OBJECT ? parseDevice(parser) : null;
+                case "ad_slots" -> adSlots = parser.currentToken() == JsonToken.START_ARRAY ? parseAdSlots(parser) : null;
                 default -> parser.skipChildren();
             }
         }

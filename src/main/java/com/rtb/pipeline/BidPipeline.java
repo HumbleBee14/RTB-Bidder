@@ -24,7 +24,7 @@ public final class BidPipeline {
         this.stages = List.copyOf(stages);
         this.slaBudgetNanos = TimeUnit.MILLISECONDS.toNanos(config.maxLatencyMs());
         this.metrics = metrics;
-        this.contextPool = new BidContextPool(256);
+        this.contextPool = new BidContextPool(config.contextPoolSize());
     }
 
     public BidContext execute(BidRequest request, long startNanos) {

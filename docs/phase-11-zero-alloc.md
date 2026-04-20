@@ -88,6 +88,81 @@ The handler owns the release. On the success path, the post-response background 
 | `pipeline/BidPipeline.java` | Uses pool for context lifecycle |
 | `server/BidRequestHandler.java` | Uses streaming codecs, manages pool release |
 
+## Optimization Details
+
+### ThreadLocal ByteArrayOutputStream for response writing
+
+`new ByteArrayOutputStream(512)` per response = 50K buffer allocations/sec. Fix: `ThreadLocal<ByteArrayOutputStream>` reused per thread, `reset()` between calls. After warmup, zero buffer allocations.
+
+### AtomicInteger for pool size tracking (not queue.size())
+
+`ConcurrentLinkedQueue.size()` is O(n) — it traverses the entire queue to count elements. At pool size 256, that's 256 pointer traversals per `release()` call. `AtomicInteger` counter is O(1) — one atomic read.
+
+### Zero-copy buffer parsing (when possible)
+
+Vert.x `Buffer.getBytes()` copies the byte array. When the underlying Netty `ByteBuf` has an array backing (`getByteBuf().array()`), we parse directly from it — zero copy. Falls back to `getBytes()` for direct (off-heap) buffers.
+
+### What still allocates (and why)
+
+BidRequest, App, Device, AdSlot records are still `new` per request. These are Java records (immutable value objects) — you can't pool them without making them mutable classes. The savings come from eliminating Jackson's ~50 internal tree nodes, not the domain objects. At 5-6 small records per request vs 50+ tree nodes, this is an acceptable trade-off.
+
+## Early context release — don't hold pooled objects across threads
+
+A subtle pool misuse: the post-response background thread originally held a reference to the `BidContext` until after frequency recording and event publishing were done. This means pooled objects live longer than necessary — and if the background thread is slow, the pool starves.
+
+Fix: extract all data needed for post-response work (userId, winner IDs, slot bids) into local variables BEFORE releasing the context back to the pool. The background thread works with extracted data only — never touches the pooled object.
+
+```java
+// Extract data needed for post-response BEFORE releasing context to pool
+String userId = request.userId();
+List<String[]> winnerIds = bidCtx.getSlotWinners().values().stream()
+        .map(w -> new String[]{userId, w.getCampaign().id()})
+        .toList();
+
+// Release context to pool immediately — don't hold it for post-response
+pipeline.release(bidCtx);
+bidCtx = null;
+
+// Post-response work uses extracted data only — no context reference
+postResponseExecutor.submit(() -> {
+    for (String[] ids : winnerIds) {
+        frequencyCapper.recordImpression(ids[0], ids[1]);
+    }
+    eventPublisher.publishBid(BidEvent.bid(requestId, userId, slotBids, latencyMs));
+});
+```
+
+Rule: pooled objects should be held for the shortest possible time. If a background thread needs data from a pooled object, copy the data out first, then return the object.
+
+## Streaming parser null safety — token type checks
+
+Jackson Streaming parses token-by-token. When a JSON field has `null` as its value (e.g., `"app": null`), `parser.nextToken()` returns `VALUE_NULL`, not `START_OBJECT`. Calling `parseApp(parser)` on a null token would try to read fields from a non-object — corrupting the parser position for all subsequent fields.
+
+```java
+// Wrong — crashes or corrupts parser state if app is null
+case "app" -> app = parseApp(parser);
+
+// Correct — check token type before delegating to sub-parser
+case "app" -> app = parser.currentToken() == JsonToken.START_OBJECT ? parseApp(parser) : null;
+```
+
+This matters because ObjectMapper handles this transparently (it builds a tree first), but streaming API gives you raw tokens — you must handle every token type yourself.
+
+## Test results
+
+```
+Multi-slot bid (2 slots, streaming codec)    → HTTP 200, Nike 300x250 + HealthPlus 728x90
+Missing app/device fields                     → HTTP 200, clean bid (null fields handled)
+Explicit null app/device                      → HTTP 200, clean bid (token type check works)
+Empty body                                    → HTTP 204, INTERNAL_ERROR (no crash)
+Malformed JSON                                → HTTP 204, INTERNAL_ERROR (caught, logged)
+Missing user_id                               → HTTP 204, NO_MATCHING_CAMPAIGN
+Missing ad_slots                              → HTTP 204, NO_MATCHING_CAMPAIGN
+Unknown user (no Redis segments)              → HTTP 204, NO_MATCHING_CAMPAIGN
+Bid floor > all campaigns                     → HTTP 204, NO_MATCHING_CAMPAIGN (floor filter)
+Health check                                  → HTTP 200, Redis UP, Kafka UP
+```
+
 ## How to verify
 
 Run async-profiler allocation flame graph under load:

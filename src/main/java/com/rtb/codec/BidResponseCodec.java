@@ -8,22 +8,26 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 /**
- * Zero-allocation JSON writer for BidResponse using Jackson Streaming API.
+ * Low-allocation JSON writer for BidResponse using Jackson Streaming API.
  *
- * ObjectMapper.writeValueAsString() creates an intermediate String (~2 allocations per field).
- * This codec writes directly to a byte buffer via JsonGenerator — no intermediate String,
- * no reflection, no annotation processing.
+ * Uses a ThreadLocal ByteArrayOutputStream to avoid allocating a new buffer per response.
+ * At 50K QPS, pooling the buffer saves 50K byte array allocations/sec.
  */
 public final class BidResponseCodec {
 
     private final JsonFactory jsonFactory;
+
+    // ThreadLocal BAOS — reused per thread, reset between calls, zero allocation after warmup
+    private static final ThreadLocal<ByteArrayOutputStream> BUFFER = ThreadLocal.withInitial(
+            () -> new ByteArrayOutputStream(512));
 
     public BidResponseCodec(JsonFactory jsonFactory) {
         this.jsonFactory = jsonFactory;
     }
 
     public byte[] encode(BidResponse response) throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream(512);
+        ByteArrayOutputStream baos = BUFFER.get();
+        baos.reset();
         try (JsonGenerator gen = jsonFactory.createGenerator(baos)) {
             gen.writeStartObject();
             gen.writeArrayFieldStart("bids");

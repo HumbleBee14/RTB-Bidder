@@ -67,12 +67,14 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
                     .setStatusCode(200)
                     .end(responseJson);
 
+            // Capture pipeline latency BEFORE post-response work
+            long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
+
             // Post-response: frequency recording + event publishing (async, non-blocking)
             for (AdCandidate winner : bidCtx.getSlotWinners().values()) {
                 frequencyCapper.recordImpression(request.userId(), winner.getCampaign().id());
             }
 
-            long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
             List<BidEvent.SlotBidInfo> slotBids = bidCtx.getResponse().bids().stream()
                     .map(b -> new BidEvent.SlotBidInfo(b.slotId(), b.adId(), b.price()))
                     .toList();

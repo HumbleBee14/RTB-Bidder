@@ -50,6 +50,8 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
         props.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, "lz4");
         // Fire-and-forget: acks=1 (leader only, no replica wait)
         props.put(ProducerConfig.ACKS_CONFIG, "1");
+        // Fail fast on startup if Kafka is unreachable (default is 60s which blocks main thread)
+        props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5000);
 
         this.producer = new KafkaProducer<>(props);
         this.objectMapper = new ObjectMapper()
@@ -85,14 +87,15 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
         try {
             String json = objectMapper.writeValueAsString(event);
             ProducerRecord<String, String> record = new ProducerRecord<>(topic, key, json);
-            // Async send — callback logs errors, never blocks
+            // TODO: Phase 10 — add circuit breaker + fallback (write to local file if Kafka down)
+            // For billing-critical WinEvents, consider acks=all + retry for durability
             producer.send(record, (metadata, exception) -> {
                 if (exception != null) {
-                    logger.error("Failed to publish to {}: {}", topic, exception.getMessage());
+                    logger.error("Failed to publish to topic {} key={}", topic, key, exception);
                 }
             });
         } catch (Exception e) {
-            logger.error("Failed to serialize event for {}: {}", topic, e.getMessage());
+            logger.error("Failed to serialize event for topic {} key={}", topic, key, e);
         }
     }
 

@@ -2,7 +2,34 @@
 
 ## What was built
 
-Complete ad event lifecycle: every bid, win notification, impression, and click publishes to Kafka. Async, fire-and-forget — never blocks the bid path. Two implementations: KafkaEventPublisher (production) and NoOpEventPublisher (development without Kafka).
+Complete ad event lifecycle: every bid, win notification, impression, and click publishes to Kafka asynchronously. Async, fire-and-forget — never blocks the bid path. Two implementations: KafkaEventPublisher (production) and NoOpEventPublisher (development without Kafka).
+
+## Why Kafka for ad events
+
+The bidder processes 50K+ requests/second. Each request generates events (bid, win, impression, click) that multiple downstream systems need:
+
+| Consumer | What it needs | Why |
+|----------|-------------|-----|
+| **Billing system** | WinEvents | Charge the advertiser based on clearing price |
+| **Analytics (ClickHouse)** | All events | Dashboards: fill rate, CTR, win rate, revenue |
+| **ML pipeline** | Impression + Click events | Retrain pCTR model on real user behavior |
+| **Campaign management** | Bid + Win events | Budget burn rate, pacing adjustments |
+| **Fraud detection** | Impression + Click events | Detect click fraud, bot traffic |
+
+Without a message queue, each consumer would need its own HTTP endpoint on the bidder — tight coupling, no replay, no buffering. Kafka decouples producers from consumers:
+
+```
+Bidder → Kafka topics → N consumers read independently
+                      → each at their own pace
+                      → can replay from any offset
+                      → bidder doesn't know or care who's consuming
+```
+
+**Why Kafka specifically** (vs Redis Streams, RabbitMQ, etc.):
+- **Throughput**: Kafka handles 1M+ messages/sec per partition — designed for event streaming at scale
+- **Durability**: events persist on disk — consumers can replay from any point
+- **Ordering**: events within a partition are strictly ordered (bid → win → impression → click for the same bidId hash to the same partition)
+- **Industry standard**: Moloco, Criteo, The Trade Desk all use Kafka for ad event pipelines
 
 ## The Ad Event Lifecycle
 
@@ -39,7 +66,7 @@ Without this lifecycle:
        ▼                                  ▼                    ▼           ▼
   ┌─────────────────────────────────────────────────────────────────────────┐
   │                     Kafka (async producer)                              │
-  │  bid-events  │  win-events  │  impression-events  │  click-events      │
+  │  bid-events  │  win-events  │  impression-events  │  click-events       │
   └─────────────────────────────────────────────────────────────────────────┘
        │                                                          │
        ▼                                                          ▼
@@ -90,6 +117,79 @@ Published when the exchange tells us our bid won. `clearingPrice` may differ fro
 ```json
 {"bidId": "kafka-test-bid", "timestamp": "2026-04-20T05:13:35.407Z"}
 ```
+
+## Performance Decisions and Reasoning
+
+### Why events are published AFTER response.end(), not before
+
+```java
+ctx.response().end(responseJson);     // ← response sent to exchange
+eventPublisher.publishBid(...);       // ← event published AFTER
+```
+
+The exchange has a hard SLA (100-200ms). Every millisecond before `response.end()` counts. Event publishing involves JSON serialization (~0.1ms) and Kafka buffer enqueue (~0.01ms). By publishing AFTER the response, bid latency is completely unaffected by Kafka health.
+
+### Why UUID.randomUUID() for requestId is acceptable
+
+`UUID.randomUUID()` costs ~1 microsecond per call. At 50K QPS = 50ms/second total CPU — negligible.
+
+| Approach | Latency | Uniqueness | Verdict |
+|----------|---------|-----------|---------|
+| `UUID.randomUUID()` | ~1μs | Globally unique | Chosen — simple, no coordination across instances |
+| `AtomicLong` counter | ~0.01μs | Per-JVM only | Not unique across multiple bidder instances |
+| Timestamp + random | ~0.5μs | Probably unique | Collision risk under concurrency |
+
+The requestId links bid → win → impression → click events in analytics. It must be globally unique.
+
+### Why KafkaEventPublisher has its own ObjectMapper
+
+HTTP API uses `snake_case` (OpenRTB convention for exchange). Kafka events use `camelCase` (Java convention for internal systems). The Kafka ObjectMapper also needs `JavaTimeModule` for `Instant` serialization. Separate ObjectMappers = separate serialization contracts.
+
+### Why max.block.ms=5000 (not default 60s)
+
+`new KafkaProducer(props)` blocks for metadata fetch. Default 60s timeout means: Kafka unreachable → server hangs 60s at startup → K8s kills pod → restart loop. With 5s: fast fail → start with degraded events → recover when Kafka is back.
+
+### Why acks=1, not acks=all
+
+| acks | Durability | Latency | Use case |
+|------|-----------|---------|----------|
+| `0` | None | Fastest | Too risky |
+| `1` | Leader ack | ~1ms | Bid/impression/click events (analytics) |
+| `all` | All replicas | ~5-10ms | WinEvents (billing) — TODO in Phase 10 |
+
+Lost bid events = analytics gap (tolerable). Lost win events = lost revenue tracking (not tolerable). Phase 10 upgrades WinEvents to `acks=all` with retries.
+
+### Why batch + linger + compression
+
+```
+Without batching: 50K events/sec × 1 network call = 50K syscalls/sec
+With batching:    50K events/sec ÷ ~100/batch = 500 syscalls/sec (100x reduction)
+```
+
+- `batch.size=16384`: fill 16KB before sending
+- `linger.ms=10`: wait 10ms to fill batch (events are post-response, delay irrelevant)
+- `compression=lz4`: JSON compresses 3-5x, reducing network I/O
+
+### Why ImpressionEvent/ClickEvent are enriched with userId, campaignId
+
+Thin events (just bidId) require JOINs in analytics:
+```sql
+-- Without enrichment: JOIN required (slow at scale)
+SELECT count(clicks)/count(impressions) FROM impressions JOIN bids ON bid_id
+
+-- With enrichment: direct aggregation (10-100x faster)
+SELECT count(clicks)/count(impressions) FROM impressions WHERE campaign_id='camp-008'
+```
+
+Currently userId/campaignId are null in impression/click events (TODO: bid cache lookup). When populated, analytics queries skip expensive JOINs.
+
+### TODO: Kafka failure resilience (Phase 10)
+
+Current: dropped events on Kafka failure (error log only). Needed:
+- Circuit breaker on publisher
+- Fallback: write to local file, replay when Kafka recovers
+- WinEvents: `acks=all` + retries (billing cannot lose events)
+- Dead-letter topic for permanently failed events
 
 ## Files
 

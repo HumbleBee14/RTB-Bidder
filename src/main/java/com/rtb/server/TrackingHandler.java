@@ -41,7 +41,8 @@ public final class TrackingHandler {
                 .setStatusCode(200)
                 .end(TRACKING_PIXEL);
 
-        eventPublisher.publishImpression(new ImpressionEvent(bidId, Instant.now()));
+        // TODO: look up userId, campaignId, slotId from bid cache (keyed by bidId)
+        eventPublisher.publishImpression(new ImpressionEvent(bidId, null, null, null, Instant.now()));
     }
 
     public void handleClick(RoutingContext ctx) {
@@ -58,6 +59,7 @@ public final class TrackingHandler {
                 .setStatusCode(200)
                 .end("{\"status\":\"click_tracked\",\"bid_id\":\"" + bidId + "\"}");
 
-        eventPublisher.publishClick(new ClickEvent(bidId, Instant.now()));
+        // TODO: look up userId, campaignId, slotId from bid cache (keyed by bidId)
+        eventPublisher.publishClick(new ClickEvent(bidId, null, null, null, Instant.now()));
     }
 }

@@ -24,11 +24,11 @@ public final class NoOpEventPublisher implements EventPublisher {
 
     @Override
     public void publishImpression(ImpressionEvent event) {
-        logger.debug("ImpressionEvent: bidId={}", event.bidId());
+        logger.debug("ImpressionEvent: bidId={}, campaignId={}", event.bidId(), event.campaignId());
     }
 
     @Override
     public void publishClick(ClickEvent event) {
-        logger.debug("ClickEvent: bidId={}", event.bidId());
+        logger.debug("ClickEvent: bidId={}, campaignId={}", event.bidId(), event.campaignId());
     }
 }

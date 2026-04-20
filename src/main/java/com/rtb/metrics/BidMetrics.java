@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -30,6 +31,9 @@ public final class BidMetrics {
     // Business metrics
     private final Counter frequencyCapHitTotal;
     private final Counter budgetExhaustedTotal;
+
+    // Per-stage timer cache — avoid Timer.builder().register() per call on hot path
+    private final ConcurrentHashMap<String, Timer> stageTimers = new ConcurrentHashMap<>();
 
     // Fill rate tracking
     private final AtomicLong totalRequests = new AtomicLong();
@@ -91,10 +95,10 @@ public final class BidMetrics {
     }
 
     public void recordNoBid(String reason, long latencyNanos) {
-        if ("TIMEOUT".equals(reason)) {
-            bidResponsesTimeout.increment();
-        } else {
-            bidResponsesNoBid.increment();
+        switch (reason) {
+            case "TIMEOUT" -> bidResponsesTimeout.increment();
+            case "INTERNAL_ERROR" -> bidResponsesError.increment();
+            default -> bidResponsesNoBid.increment();
         }
         bidLatency.record(latencyNanos, TimeUnit.NANOSECONDS);
     }
@@ -105,10 +109,11 @@ public final class BidMetrics {
     }
 
     public void recordStageLatency(String stageName, long latencyNanos) {
-        Timer.builder("pipeline_stage_latency_seconds")
-                .tag("stage", stageName)
-                .register(registry)
-                .record(latencyNanos, TimeUnit.NANOSECONDS);
+        stageTimers.computeIfAbsent(stageName, name ->
+                Timer.builder("pipeline_stage_latency_seconds")
+                        .tag("stage", name)
+                        .register(registry)
+        ).record(latencyNanos, TimeUnit.NANOSECONDS);
     }
 
     public void recordFrequencyCapHit() {

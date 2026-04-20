@@ -44,7 +44,7 @@ public final class BidRouter {
         router.post("/win").handler(winHandler);
         router.get("/impression").handler(trackingHandler::handleImpression);
         router.get("/click").handler(trackingHandler::handleClick);
-        router.get("/health").handler(this::handleHealth);
+        router.get("/health").handler(ctx -> handleHealth(ctx, vertx));
         router.get("/metrics").handler(this::handleMetrics);
         router.get("/api-docs").handler(this::handleApiDocs);
         router.get("/docs").handler(this::handleSwaggerUi);
@@ -53,21 +53,28 @@ public final class BidRouter {
         return router;
     }
 
-    private void handleHealth(RoutingContext ctx) {
-        try {
-            var result = healthCheck.check();
-            boolean healthy = "UP".equals(result.get("status"));
-            String json = objectMapper.writeValueAsString(result);
-            ctx.response()
+    /** Health checks run on a worker thread — never blocks the event loop. */
+    private void handleHealth(RoutingContext ctx, Vertx vertx) {
+        vertx.executeBlocking(() -> {
+            return healthCheck.check();
+        }).onSuccess(result -> {
+            try {
+                boolean healthy = "UP".equals(result.get("status"));
+                String json = objectMapper.writeValueAsString(result);
+                ctx.response()
+                        .putHeader("Content-Type", "application/json")
+                        .setStatusCode(healthy ? 200 : 503)
+                        .end(json);
+            } catch (Exception e) {
+                ctx.response().setStatusCode(503)
+                        .putHeader("Content-Type", "application/json")
+                        .end("{\"status\":\"DOWN\"}");
+            }
+        }).onFailure(err -> {
+            ctx.response().setStatusCode(503)
                     .putHeader("Content-Type", "application/json")
-                    .setStatusCode(healthy ? 200 : 503)
-                    .end(json);
-        } catch (Exception e) {
-            ctx.response()
-                    .putHeader("Content-Type", "application/json")
-                    .setStatusCode(503)
-                    .end("{\"status\":\"DOWN\",\"error\":\"" + e.getMessage() + "\"}");
-        }
+                    .end("{\"status\":\"DOWN\"}");
+        });
     }
 
     private void handleMetrics(RoutingContext ctx) {

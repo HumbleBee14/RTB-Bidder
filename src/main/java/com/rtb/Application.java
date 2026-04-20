@@ -106,9 +106,12 @@ public final class Application {
 
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig, bidMetrics);
 
+        KafkaHealthCheck kafkaHealthCheck = new KafkaHealthCheck(config);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(kafkaHealthCheck), "shutdown-kafka-health"));
+
         CompositeHealthCheck healthCheck = new CompositeHealthCheck(List.of(
-                new RedisHealthCheck(redisConfig),
-                new KafkaHealthCheck(config)
+                new RedisHealthCheck(userSegmentRepo.getConnection()),
+                kafkaHealthCheck
         ));
 
         // Event publishing

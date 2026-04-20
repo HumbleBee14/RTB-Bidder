@@ -6,7 +6,7 @@ import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Singleton Micrometer registry with Prometheus exporter. */
+/** Micrometer registry with Prometheus exporter. Created once in Application. */
 public final class MetricsRegistry {
 
     private static final Logger logger = LoggerFactory.getLogger(MetricsRegistry.class);

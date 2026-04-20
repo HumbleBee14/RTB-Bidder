@@ -105,6 +105,8 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
         long latencyNanos = System.nanoTime() - startNanos;
         long latencyMs = latencyNanos / 1_000_000;
         bidMetrics.recordNoBid(reason.name(), latencyNanos);
+        if (reason == NoBidReason.ALL_FREQUENCY_CAPPED) bidMetrics.recordFrequencyCapHit();
+        if (reason == NoBidReason.BUDGET_EXHAUSTED) bidMetrics.recordBudgetExhausted();
         ctx.response()
                 .putHeader("X-NoBid-Reason", reason.name())
                 .setStatusCode(204)

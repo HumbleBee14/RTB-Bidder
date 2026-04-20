@@ -177,9 +177,39 @@ Hourly utilization    Bid probability
 
 This produces smooth delivery instead of a sawtooth pattern.
 
+### How it's wired — decorator pattern, not a third type
+
+```java
+// Step 1: pick the BASE pacer (where budget data lives)
+BudgetPacer basePacer = switch (type) {
+    case "distributed" -> new DistributedBudgetPacer(redis, campaigns);  // Redis
+    default            -> new LocalBudgetPacer(campaigns);               // AtomicLong
+};
+
+// Step 2: optionally WRAP with hourly pacing (rate limiting layer)
+if (hourlyPacing) {
+    return new HourlyPacedBudgetPacer(basePacer, 24);
+}
+return basePacer;
+```
+
+Hourly pacing is not a third storage type — it's a **decorator on top of either storage type**. It doesn't store budget itself. It wraps whatever stores the budget and adds rate limiting before calling the inner `trySpend()`.
+
+This gives 4 combinations from 2 configs:
+
+| `pacing.type` | `pacing.hourly.enabled` | What runs |
+|---------------|------------------------|-----------|
+| `local` | `false` | `LocalBudgetPacer` — total budget only |
+| `local` | `true` | `HourlyPacedBudgetPacer(LocalBudgetPacer)` — hourly + total |
+| `distributed` | `false` | `DistributedBudgetPacer` — total budget on Redis |
+| `distributed` | `true` | `HourlyPacedBudgetPacer(DistributedBudgetPacer)` — hourly + Redis |
+
+If hourly pacing were a separate switch case, we'd need `local-hourly` and `distributed-hourly` as additional types — combinatorial explosion. The decorator pattern keeps it to 2 independent configs.
+
 ### Config
 
 ```properties
+pacing.type=local             # or distributed (where budget data lives)
 pacing.hourly.enabled=true    # wrap base pacer with hourly pacing
 pacing.hourly.hours=24        # spread across 24 hours
 ```

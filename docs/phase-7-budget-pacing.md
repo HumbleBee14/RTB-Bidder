@@ -85,9 +85,11 @@ If ALL candidates for a slot are exhausted → that slot gets no bid. If ALL slo
 | File | Purpose |
 |------|---------|
 | `pacing/BudgetPacer.java` | Interface — `trySpend(campaignId, amount)` + `remainingBudget()` |
-| `pacing/LocalBudgetPacer.java` | AtomicLong, microdollars, lock-free |
-| `pacing/DistributedBudgetPacer.java` | Redis DECRBY via Lua script |
-| `pipeline/stages/BudgetPacingStage.java` | Validates winner budget, fallback to next candidate |
+| `pacing/LocalBudgetPacer.java` | CAS loop on AtomicLong, microdollars, lock-free |
+| `pacing/DistributedBudgetPacer.java` | Redis DECRBY via Lua script, SETNX seeding |
+| `pacing/HourlyPacedBudgetPacer.java` | Decorator — hourly rate limiting + spend smoothing |
+| `pacing/BudgetMetrics.java` | Spend/exhaustion/throttle counters (pre-Phase 9) |
+| `pipeline/stages/BudgetPacingStage.java` | Validates winner budget, loops ALL fallback candidates |
 
 ## Test Results
 
@@ -137,6 +139,58 @@ pacing.type=distributed   # multi-instance (Redis DECRBY)
 ### Exhaustion fallback: iterates ALL candidates, not just one
 
 When the winner's budget is exhausted, BudgetPacingStage loops through all remaining candidates by score until one succeeds or all are exhausted. No money left on the table.
+
+## Hourly Pacing + Spend Smoothing
+
+### Why hourly pacing is critical
+
+Without hourly pacing, a $1000/day campaign running during a 50K QPS morning traffic spike will burn its entire budget in minutes. The afternoon has zero budget left — the campaign is invisible for 20+ hours. Advertisers hate this.
+
+### How it works
+
+`HourlyPacedBudgetPacer` wraps any `BudgetPacer` (decorator pattern):
+
+```
+hourlyBudget = remainingTotalBudget / hoursRemainingInDay
+
+Example at 2pm (10 hours remaining):
+  Campaign budget: $500 remaining
+  Hourly budget: $500 / 10 = $50/hour
+  
+At 6pm (6 hours remaining), if only $200 was spent by 6pm:
+  Remaining: $800
+  Hourly budget: $800 / 6 = $133/hour (unspent hours roll forward)
+```
+
+Dynamic recalculation means quiet hours don't waste budget — it rolls into peak hours.
+
+### Spend smoothing (gradual throttle, not hard cutoff)
+
+A hard cutoff at 100% hourly budget creates a spike-then-silence pattern. Spend smoothing ramps down gradually:
+
+```
+Hourly utilization    Bid probability
+< 80%                 100% (always bid)
+80-95%                Linear ramp down (80% → 100%, 95% → 0%)
+> 95%                 0% (stop, leave 5% buffer for race conditions)
+```
+
+This produces smooth delivery instead of a sawtooth pattern.
+
+### Config
+
+```properties
+pacing.hourly.enabled=true    # wrap base pacer with hourly pacing
+pacing.hourly.hours=24        # spread across 24 hours
+```
+
+### Performance
+
+```
+BudgetPacing (with hourly pacing): 0.07ms   (vs 0.03ms without)
+```
+
+The hourly layer adds ~0.04ms — one `remainingBudget()` call + hourly utilization calculation + ThreadLocalRandom check. Negligible in the 50ms SLA.
 
 ## What production systems do beyond total budget
 

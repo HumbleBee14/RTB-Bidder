@@ -1,0 +1,114 @@
+package com.rtb.pacing;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.time.LocalTime;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * Decorator that adds hourly pacing and spend smoothing on top of any BudgetPacer.
+ *
+ * Without hourly pacing, a $1000/day campaign can burn its entire budget in
+ * a morning traffic spike. This spreads the budget across remaining hours.
+ *
+ * Hourly budget = remaining total budget / hours remaining in the day.
+ * Recalculated each hour — unspent budget from quiet hours rolls into busy hours.
+ *
+ * Spend smoothing: as hourly spend approaches the hourly limit, we gradually
+ * reduce bid probability instead of a hard cutoff.
+ *   < 80% of hourly budget → always bid (100%)
+ *   80-95% → bid with decreasing probability (linear ramp down)
+ *   > 95% → stop bidding for this campaign this hour
+ */
+public final class HourlyPacedBudgetPacer implements BudgetPacer {
+
+    private static final Logger logger = LoggerFactory.getLogger(HourlyPacedBudgetPacer.class);
+
+    private static final double SMOOTH_START = 0.80;  // start throttling at 80% hourly spend
+    private static final double HARD_STOP = 0.95;     // stop at 95% (leave 5% buffer for race conditions)
+
+    private final BudgetPacer delegate;
+    private final int pacingHours;
+
+    // Track hourly spend per campaign: campaignId → {currentHour, spentThisHourMicros}
+    private final ConcurrentHashMap<String, HourlySpend> hourlySpends = new ConcurrentHashMap<>();
+
+    /**
+     * @param delegate the underlying pacer that manages total budget
+     * @param pacingHours hours to spread budget across (typically 24)
+     */
+    public HourlyPacedBudgetPacer(BudgetPacer delegate, int pacingHours) {
+        this.delegate = delegate;
+        this.pacingHours = pacingHours;
+        logger.info("Hourly pacing enabled: spreading budget across {} hours with spend smoothing", pacingHours);
+    }
+
+    @Override
+    public boolean trySpend(String campaignId, double amount) {
+        double remaining = delegate.remainingBudget(campaignId);
+        if (remaining <= 0) return false;
+
+        int currentHour = LocalTime.now().getHour();
+        int hoursRemaining = Math.max(1, pacingHours - currentHour);
+        double hourlyBudget = remaining / hoursRemaining;
+
+        HourlySpend spend = hourlySpends.computeIfAbsent(campaignId, k -> new HourlySpend());
+        spend.resetIfNewHour(currentHour);
+
+        double spentThisHour = spend.getSpentDollars();
+        double hourlyUtilization = hourlyBudget > 0 ? spentThisHour / hourlyBudget : 1.0;
+
+        // Spend smoothing: gradually reduce bid probability as hourly budget depletes
+        if (hourlyUtilization >= HARD_STOP) {
+            logger.debug("Hourly budget exhausted: campaign={}, spent={}, hourlyBudget={}",
+                    campaignId, String.format("%.2f", spentThisHour), String.format("%.2f", hourlyBudget));
+            return false;
+        }
+
+        if (hourlyUtilization >= SMOOTH_START) {
+            // Linear ramp-down from 100% at SMOOTH_START to 0% at HARD_STOP
+            double bidProbability = 1.0 - (hourlyUtilization - SMOOTH_START) / (HARD_STOP - SMOOTH_START);
+            if (ThreadLocalRandom.current().nextDouble() > bidProbability) {
+                return false;
+            }
+        }
+
+        // Passed hourly pacing check → try the actual budget decrement
+        boolean success = delegate.trySpend(campaignId, amount);
+        if (success) {
+            spend.recordSpend(amount);
+        }
+        return success;
+    }
+
+    @Override
+    public double remainingBudget(String campaignId) {
+        return delegate.remainingBudget(campaignId);
+    }
+
+    /** Tracks spend within the current hour for one campaign. Thread-safe. */
+    private static final class HourlySpend {
+        private static final long MICRODOLLAR = 1_000_000L;
+        private final AtomicInteger currentHour = new AtomicInteger(-1);
+        private final AtomicLong spentMicros = new AtomicLong(0);
+
+        void resetIfNewHour(int hour) {
+            if (currentHour.get() != hour) {
+                currentHour.set(hour);
+                spentMicros.set(0);
+            }
+        }
+
+        void recordSpend(double amount) {
+            spentMicros.addAndGet(Math.round(amount * MICRODOLLAR));
+        }
+
+        double getSpentDollars() {
+            return spentMicros.get() / (double) MICRODOLLAR;
+        }
+    }
+}

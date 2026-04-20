@@ -11,6 +11,7 @@ import com.rtb.pipeline.PipelineStage;
 import com.rtb.frequency.RedisFrequencyCapper;
 import com.rtb.pacing.BudgetPacer;
 import com.rtb.pacing.DistributedBudgetPacer;
+import com.rtb.pacing.HourlyPacedBudgetPacer;
 import com.rtb.pacing.LocalBudgetPacer;
 import com.rtb.pipeline.stages.BudgetPacingStage;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
@@ -152,7 +153,7 @@ public final class Application {
                                                     CampaignRepository campaignRepo) {
         String type = config.get("pacing.type", "local");
         logger.info("Pacing type: {}", type);
-        return switch (type) {
+        BudgetPacer basePacer = switch (type) {
             case "distributed" -> {
                 logger.info("Using distributed budget pacer (Redis)");
                 yield new DistributedBudgetPacer(redisConfig, campaignRepo);
@@ -162,6 +163,14 @@ public final class Application {
                 yield new LocalBudgetPacer(campaignRepo);
             }
         };
+
+        boolean hourlyPacing = config.getBoolean("pacing.hourly.enabled", false);
+        if (hourlyPacing) {
+            int hours = config.getInt("pacing.hourly.hours", 24);
+            logger.info("Hourly pacing enabled: spreading across {} hours with spend smoothing", hours);
+            return new HourlyPacedBudgetPacer(basePacer, hours);
+        }
+        return basePacer;
     }
 
     private static MLScorer createMLScorer(AppConfig config) {

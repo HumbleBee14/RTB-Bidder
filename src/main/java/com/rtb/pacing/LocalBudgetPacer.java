@@ -20,8 +20,10 @@ public final class LocalBudgetPacer implements BudgetPacer {
     private static final long MICRODOLLAR = 1_000_000L;
 
     private final ConcurrentHashMap<String, AtomicLong> budgets = new ConcurrentHashMap<>();
+    private final BudgetMetrics metrics;
 
-    public LocalBudgetPacer(CampaignRepository campaignRepository) {
+    public LocalBudgetPacer(CampaignRepository campaignRepository, BudgetMetrics metrics) {
+        this.metrics = metrics;
         for (Campaign campaign : campaignRepository.getActiveCampaigns()) {
             long budgetMicros = (long) (campaign.budget() * MICRODOLLAR);
             budgets.put(campaign.id(), new AtomicLong(budgetMicros));
@@ -39,18 +41,19 @@ public final class LocalBudgetPacer implements BudgetPacer {
         long amountMicros = Math.round(amount * MICRODOLLAR);
         if (amountMicros <= 0) return false;
 
-        // CAS loop — true atomic decrement, no race window
         long current;
         long next;
         do {
             current = budget.get();
             next = current - amountMicros;
             if (next < 0) {
+                metrics.recordExhausted(campaignId);
                 logger.debug("Budget exhausted: campaign={}", campaignId);
                 return false;
             }
         } while (!budget.compareAndSet(current, next));
 
+        metrics.recordSpend(campaignId);
         return true;
     }
 

@@ -205,10 +205,10 @@ These wrap the existing `BudgetPacer` interface via decorator pattern. Zero pipe
 
 | Enhancement | What it does | Why it matters | Implementation |
 |-------------|-------------|----------------|----------------|
-| **Hourly pacing** | Spreads budget evenly across the day ($1000/day = ~$42/hour) | Without it, morning traffic spike can burn entire budget in 1 hour | `HourlyPacedBudgetPacer` wraps inner pacer, adds rate check per hour window |
-| **Spend smoothing** | Gradually reduces bid rate as budget depletes (80% spent → bid 50% of requests) | Avoids hard cliff when budget hits zero — smoother campaign delivery | Probability-based gating in `trySpend()` based on remaining/total ratio |
-| **ML-driven throttling** | Adjusts bid rate based on predicted conversion value | Spend more during high-value hours, conserve during low-value | Scorer + Pacer coordination, bid-level throttle decisions |
-| **Budget monitoring** | Tracks spend rate, alerts on over/under-pacing | Operations visibility — catch runaway spend before damage | Micrometer gauges per campaign, Prometheus alerts |
+| **Hourly pacing** | Spreads budget evenly across the day ($1000/day = ~$42/hour) | Without it, morning traffic spike can burn entire budget in 1 hour | ✅ DONE — `HourlyPacedBudgetPacer` decorator |
+| **Spend smoothing** | Gradually reduces bid rate as budget depletes (80% spent → bid 50% of requests) | Avoids hard cliff when budget hits zero — smoother campaign delivery | ✅ DONE — built into `HourlyPacedBudgetPacer` (80-95% ramp-down) |
+| **Budget monitoring** | Tracks spend/exhaustion/throttle counts per campaign | Operations visibility — catch runaway spend before damage | ✅ DONE — `BudgetMetrics` counters wired into pacers. TODO: Micrometer gauges in Phase 9 |
+| **ML-driven throttling** | Adjusts bid rate based on predicted conversion value | Spend more during high-value hours, conserve during low-value | ❌ PENDING — needs Scorer + Pacer coordination, TODO in code |
 
 Refs:
 - [Optimal Budget Pacing for RTB](http://www0.cs.ucl.ac.uk/staff/w.zhang/rtb-papers/opt-rtb-pacing.pdf)

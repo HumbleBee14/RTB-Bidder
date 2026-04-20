@@ -33,17 +33,14 @@ public final class HourlyPacedBudgetPacer implements BudgetPacer {
 
     private final BudgetPacer delegate;
     private final int pacingHours;
+    private final BudgetMetrics metrics;
 
-    // Track hourly spend per campaign: campaignId → {currentHour, spentThisHourMicros}
     private final ConcurrentHashMap<String, HourlySpend> hourlySpends = new ConcurrentHashMap<>();
 
-    /**
-     * @param delegate the underlying pacer that manages total budget
-     * @param pacingHours hours to spread budget across (typically 24)
-     */
-    public HourlyPacedBudgetPacer(BudgetPacer delegate, int pacingHours) {
+    public HourlyPacedBudgetPacer(BudgetPacer delegate, int pacingHours, BudgetMetrics metrics) {
         this.delegate = delegate;
         this.pacingHours = pacingHours;
+        this.metrics = metrics;
         logger.info("Hourly pacing enabled: spreading budget across {} hours with spend smoothing", pacingHours);
     }
 
@@ -64,18 +61,22 @@ public final class HourlyPacedBudgetPacer implements BudgetPacer {
 
         // Spend smoothing: gradually reduce bid probability as hourly budget depletes
         if (hourlyUtilization >= HARD_STOP) {
+            metrics.recordThrottled(campaignId);
             logger.debug("Hourly budget exhausted: campaign={}, spent={}, hourlyBudget={}",
                     campaignId, String.format("%.2f", spentThisHour), String.format("%.2f", hourlyBudget));
             return false;
         }
 
         if (hourlyUtilization >= SMOOTH_START) {
-            // Linear ramp-down from 100% at SMOOTH_START to 0% at HARD_STOP
             double bidProbability = 1.0 - (hourlyUtilization - SMOOTH_START) / (HARD_STOP - SMOOTH_START);
             if (ThreadLocalRandom.current().nextDouble() > bidProbability) {
+                metrics.recordThrottled(campaignId);
                 return false;
             }
         }
+
+        // TODO: ML-driven throttling — adjust bid probability based on predicted conversion value
+        // from Scorer, spend more during high-conversion hours. Requires Scorer + Pacer coordination.
 
         // Passed hourly pacing check → try the actual budget decrement
         boolean success = delegate.trySpend(campaignId, amount);

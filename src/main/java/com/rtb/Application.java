@@ -9,6 +9,7 @@ import com.rtb.config.RedisConfig;
 import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
 import com.rtb.frequency.RedisFrequencyCapper;
+import com.rtb.pacing.BudgetMetrics;
 import com.rtb.pacing.BudgetPacer;
 import com.rtb.pacing.DistributedBudgetPacer;
 import com.rtb.pacing.HourlyPacedBudgetPacer;
@@ -72,7 +73,8 @@ public final class Application {
         }
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
-        BudgetPacer budgetPacer = createBudgetPacer(config, redisConfig, campaignRepo);
+        BudgetMetrics budgetMetrics = new BudgetMetrics();
+        BudgetPacer budgetPacer = createBudgetPacer(config, redisConfig, campaignRepo, budgetMetrics);
         if (budgetPacer instanceof AutoCloseable closeablePacer) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePacer), "shutdown-pacer"));
         }
@@ -150,7 +152,7 @@ public final class Application {
     }
 
     private static BudgetPacer createBudgetPacer(AppConfig config, RedisConfig redisConfig,
-                                                    CampaignRepository campaignRepo) {
+                                                    CampaignRepository campaignRepo, BudgetMetrics metrics) {
         String type = config.get("pacing.type", "local");
         logger.info("Pacing type: {}", type);
         BudgetPacer basePacer = switch (type) {
@@ -160,7 +162,7 @@ public final class Application {
             }
             default -> {
                 logger.info("Using local budget pacer (AtomicLong)");
-                yield new LocalBudgetPacer(campaignRepo);
+                yield new LocalBudgetPacer(campaignRepo, metrics);
             }
         };
 
@@ -168,7 +170,7 @@ public final class Application {
         if (hourlyPacing) {
             int hours = config.getInt("pacing.hourly.hours", 24);
             logger.info("Hourly pacing enabled: spreading across {} hours with spend smoothing", hours);
-            return new HourlyPacedBudgetPacer(basePacer, hours);
+            return new HourlyPacedBudgetPacer(basePacer, hours, metrics);
         }
         return basePacer;
     }

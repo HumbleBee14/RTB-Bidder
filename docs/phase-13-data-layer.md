@@ -100,22 +100,36 @@ ClickHouse has a unique built-in Kafka integration. Instead of writing a Java Ka
 3. **Materialized view** — auto-copies each row from Kafka table to MergeTree table
 
 ```sql
--- 1. Kafka consumer table
-CREATE TABLE bid_events_kafka (...) ENGINE = Kafka()
-SETTINGS kafka_broker_list = 'kafka:9092',
+-- 1. Kafka consumer table — column names match Java JSON (camelCase)
+CREATE TABLE bid_events_kafka (
+    requestId String, userId Nullable(String), bid UInt8,
+    noBidReason Nullable(String), pipelineLatencyMs UInt64, timestamp String
+) ENGINE = Kafka()
+SETTINGS kafka_broker_list = 'kafka:29092',
          kafka_topic_list = 'bid-events',
-         kafka_format = 'JSONEachRow';
+         kafka_format = 'JSONEachRow',
+         input_format_skip_unknown_fields = 1;
 
--- 2. Storage table
-CREATE TABLE bid_events (...) ENGINE = MergeTree()
+-- 2. Storage table — snake_case for analytics queries
+CREATE TABLE bid_events (
+    request_id String, user_id Nullable(String), bid UInt8,
+    no_bid_reason Nullable(String), latency_ms UInt64, timestamp DateTime64(3)
+) ENGINE = MergeTree()
 ORDER BY (timestamp, request_id)
 PARTITION BY toYYYYMMDD(timestamp)
 TTL toDateTime(timestamp) + INTERVAL 90 DAY;
 
--- 3. Auto-transfer
+-- 3. Materialized view — renames camelCase → snake_case, parses ISO-8601
 CREATE MATERIALIZED VIEW bid_events_mv TO bid_events AS
-SELECT * FROM bid_events_kafka;
+SELECT requestId AS request_id, userId AS user_id, bid,
+       noBidReason AS no_bid_reason, pipelineLatencyMs AS latency_ms,
+       parseDateTimeBestEffort(timestamp) AS timestamp
+FROM bid_events_kafka;
 ```
+
+**Why the rename layer matters**: The Java `KafkaEventPublisher` uses a plain `ObjectMapper` (no SNAKE_CASE strategy), so events serialize with camelCase field names (`requestId`, `pipelineLatencyMs`). ClickHouse's `JSONEachRow` format matches columns by name. The Kafka engine table must use camelCase to match the JSON. The materialized view then renames to snake_case for clean analytics queries. `input_format_skip_unknown_fields` ignores fields like `slotBids` that we don't store. `parseDateTimeBestEffort` handles the ISO-8601 timestamp strings from `Instant.toString()`.
+
+**Kafka dual listeners**: ClickHouse connects to Kafka via Docker-internal network (`kafka:29092`), while the bidder on the host connects via `localhost:9092`. Kafka is configured with separate INTERNAL and EXTERNAL listeners for this.
 
 Result: events flow Kafka → ClickHouse with zero application code. ClickHouse commits Kafka offsets automatically. If ClickHouse restarts, it resumes from the last committed offset.
 
@@ -196,49 +210,88 @@ ORDER BY count DESC;
 
 ## How to run
 
-### Default mode (JSON — no PostgreSQL needed)
+### 1. Start infrastructure
 
 ```bash
-# Campaigns loaded from src/main/resources/campaigns.json
-java -jar target/rtb-bidder-1.0.0.jar
-```
-
-### PostgreSQL mode
-
-```bash
-# Start infrastructure
 docker compose up -d
-
-# Verify campaigns seeded
-docker exec <postgres-container> psql -U rtb -c "SELECT id, advertiser FROM campaigns"
-
-# Start bidder with PostgreSQL
-CAMPAIGNS_SOURCE=postgres java -jar target/rtb-bidder-1.0.0.jar
+docker ps   # verify all 4 containers: redis, kafka, postgres, clickhouse
 ```
 
-### ClickHouse analytics
+### 2. Seed Redis with test users
 
 ```bash
-# After running the bidder with EVENTS_TYPE=kafka, events flow to ClickHouse automatically
+# 10K users with random segments — needed for targeting to work
+bash docker/init-redis.sh | docker exec -i <redis-container> redis-cli --pipe
 
-# Check if events are flowing
-docker exec <clickhouse-container> clickhouse-client -d rtb \
-  --query "SELECT count() FROM bid_events"
-
-# Run analytics queries
-docker exec <clickhouse-container> clickhouse-client -d rtb \
-  --query "SELECT toStartOfHour(timestamp) AS hour, countIf(bid=1) AS bids, count() AS total FROM bid_events GROUP BY hour ORDER BY hour"
+# Verify
+docker exec <redis-container> redis-cli DBSIZE                          # should be ~10000
+docker exec <redis-container> redis-cli SMEMBERS user:user_00001:segments  # check one user
 ```
 
-### ClickHouse init (if tables aren't created automatically)
+### 3. Verify PostgreSQL campaigns seeded
 
 ```bash
-# The init SQL should run automatically via docker-entrypoint-initdb.d.
-# If tables are missing (check with SHOW TABLES FROM rtb), run manually:
+# The init script runs automatically on first container start
+docker exec <postgres-container> psql -U rtb -c "SELECT id, advertiser, budget FROM campaigns"
+# Should show 10 campaigns
+```
+
+### 4. Verify ClickHouse tables
+
+```bash
+docker exec <clickhouse-container> clickhouse-client -d rtb --query "SHOW TABLES"
+# Should show 12 tables (4 MergeTree + 4 Kafka engine + 4 materialized views)
+
+# If tables are missing — Kafka engine tables can fail if Kafka wasn't ready
+# during ClickHouse startup. Run init manually:
 docker exec -i <clickhouse-container> clickhouse-client -d rtb --multiquery \
   < docker/init-clickhouse.sql
 ```
 
+### 5. Build
+
+```bash
+mvn package -q -DskipTests    # or ./mvnw package -q -DskipTests
+```
+
+### 6. Run — JSON mode (default, no PostgreSQL needed)
+
+```bash
+java -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
+# Log output: "Campaign source: json" → "Loaded 10 campaigns from campaigns.json"
+```
+
+### 7. Run — PostgreSQL mode
+
+```bash
+CAMPAIGNS_SOURCE=postgres java -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
+# Log output: "Campaign source: postgres" → "Connected to PostgreSQL" → "Campaign cache refreshed: 10"
+```
+
+### 8. Test a bid
+
+```bash
+curl -s -w "\nHTTP: %{http_code}" -X POST http://localhost:8080/bid \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"user_00001","app":{"id":"a1","category":"sports","bundle":"com.s"},"device":{"type":"mobile","os":"android","geo":"US"},"ad_slots":[{"id":"s1","sizes":["300x250"],"bid_floor":0.10}]}'
+# Should return HTTP 200 with a bid (if user has matching segments in Redis)
+```
+
+### 9. Test ClickHouse analytics (requires EVENTS_TYPE=kafka)
+
+```bash
+# Start bidder with Kafka events enabled
+EVENTS_TYPE=kafka java -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
+
+# Send some bid requests, then check ClickHouse
+docker exec <clickhouse-container> clickhouse-client -d rtb \
+  --query "SELECT count() FROM bid_events"
+
+# Run analytics
+docker exec <clickhouse-container> clickhouse-client -d rtb \
+  --query "SELECT toStartOfHour(timestamp) AS hour, countIf(bid=1) AS bids, count() AS total FROM bid_events GROUP BY hour ORDER BY hour"
+```
+
 ## Known issue: Windows Docker JDBC auth
 
-On Windows with Docker Desktop, the PostgreSQL JDBC driver fails scram-sha-256 authentication even though `psql` works from within Docker. The password is correct (verified by connecting from another container), but `DriverManager.getConnection()` gets `FATAL: password authentication failed`. This is a Windows Docker Desktop networking/auth specific issue. Works correctly on macOS Docker. Use JSON mode on Windows, PostgreSQL mode on macOS/Linux.
+On Windows with Docker Desktop, the PostgreSQL JDBC driver fails scram-sha-256 authentication even though `psql` works from within Docker. The password is correct (verified by connecting from another container), but `DriverManager.getConnection()` gets `FATAL: password authentication failed`. This is a Windows Docker Desktop port-forwarding specific issue — connections from the host arrive at PostgreSQL from the Docker bridge IP, not localhost, triggering scram-sha-256 auth which the JDBC driver fails on Windows. Works correctly on macOS/Linux Docker. Use JSON mode (`campaigns.source=json`, the default) on Windows.

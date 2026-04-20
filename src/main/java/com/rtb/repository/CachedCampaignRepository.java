@@ -34,8 +34,8 @@ public final class CachedCampaignRepository implements CampaignRepository {
     }
 
     /** Reload campaigns from the underlying repository. Safe to call from any thread. */
-    public void refresh() {
-        List<Campaign> campaigns = delegate.getActiveCampaigns();
+    public synchronized void refresh() {
+        List<Campaign> campaigns = List.copyOf(delegate.getActiveCampaigns());
         cache.set(campaigns);
         logger.info("Campaign cache refreshed: {} active campaigns", campaigns.size());
     }

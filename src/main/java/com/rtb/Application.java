@@ -181,10 +181,8 @@ public final class Application {
         CampaignRepository source = switch (type) {
             case "postgres" -> {
                 PostgresConfig pgConfig = PostgresConfig.from(config);
-                PostgresCampaignRepository pgRepo = new PostgresCampaignRepository(pgConfig);
-                Runtime.getRuntime().addShutdownHook(new Thread(pgRepo::close, "shutdown-postgres"));
                 logger.info("Using PostgreSQL campaign repository");
-                yield pgRepo;
+                yield new PostgresCampaignRepository(pgConfig);
             }
             default -> {
                 logger.info("Using JSON file campaign repository (default)");

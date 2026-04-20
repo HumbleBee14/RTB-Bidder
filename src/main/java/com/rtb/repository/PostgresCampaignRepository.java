@@ -16,8 +16,13 @@ import java.util.*;
  * JDBC is simpler, blocks only the calling thread, and the CachedCampaignRepository
  * decorator ensures getActiveCampaigns() returns instantly from memory on the hot path.
  * Using a reactive client for a startup-time bulk load would add complexity with no benefit.
+ *
+ * Connection lifecycle: creates a fresh connection per getActiveCampaigns() call and closes
+ * it immediately. This method runs at startup and optionally on a periodic refresh timer —
+ * not on the hot path. A long-lived connection would go stale between infrequent refreshes
+ * (isClosed() returns false but the socket is broken), causing silent failures.
  */
-public final class PostgresCampaignRepository implements CampaignRepository, AutoCloseable {
+public final class PostgresCampaignRepository implements CampaignRepository {
 
     private static final Logger logger = LoggerFactory.getLogger(PostgresCampaignRepository.class);
 
@@ -26,52 +31,41 @@ public final class PostgresCampaignRepository implements CampaignRepository, Aut
             "creative_url, advertiser_domain, max_impressions_per_hour, value_per_click " +
             "FROM campaigns WHERE active = TRUE";
 
-    private final PostgresConfig config;
-    private Connection connection;
+    private final String jdbcUrl;
+    private final Properties connectionProps;
 
     public PostgresCampaignRepository(PostgresConfig config) {
-        this.config = config;
-        this.connection = connect();
-    }
+        this.jdbcUrl = config.jdbcUrl();
+        this.connectionProps = new Properties();
+        this.connectionProps.setProperty("user", config.user());
+        this.connectionProps.setProperty("password", config.password());
 
-    private Connection connect() {
-        try {
-            logger.info("Connecting to PostgreSQL: {} user={}", config.jdbcUrl(), config.user());
-            Properties props = new Properties();
-            props.setProperty("user", config.user());
-            props.setProperty("password", config.password());
-            Connection conn = DriverManager.getConnection(config.jdbcUrl(), props);
+        // Verify connectivity at startup — fail fast if PostgreSQL is unreachable
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, connectionProps)) {
             logger.info("Connected to PostgreSQL: {}:{}/{}", config.host(), config.port(), config.database());
-            return conn;
         } catch (SQLException e) {
-            logger.error("PostgreSQL connection failed: {} — state={}", e.getMessage(), e.getSQLState());
-            throw new RuntimeException("Failed to connect to PostgreSQL: " + config.jdbcUrl(), e);
+            throw new RuntimeException("Failed to connect to PostgreSQL: " + jdbcUrl, e);
         }
     }
 
     @Override
     public List<Campaign> getActiveCampaigns() {
-        try {
-            if (connection == null || connection.isClosed()) {
-                connection = connect();
-            }
-            try (PreparedStatement stmt = connection.prepareStatement(LOAD_ACTIVE_SQL);
-                 ResultSet rs = stmt.executeQuery()) {
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, connectionProps);
+             PreparedStatement stmt = conn.prepareStatement(LOAD_ACTIVE_SQL);
+             ResultSet rs = stmt.executeQuery()) {
 
-                List<Campaign> campaigns = new ArrayList<>();
-                while (rs.next()) {
-                    campaigns.add(mapRow(rs));
-                }
-                logger.info("Loaded {} active campaigns from PostgreSQL", campaigns.size());
-                return List.copyOf(campaigns);
+            List<Campaign> campaigns = new ArrayList<>();
+            while (rs.next()) {
+                campaigns.add(mapRow(rs));
             }
+            logger.info("Loaded {} active campaigns from PostgreSQL", campaigns.size());
+            return List.copyOf(campaigns);
         } catch (SQLException e) {
             throw new RuntimeException("Failed to load campaigns from PostgreSQL", e);
         }
     }
 
     private Campaign mapRow(ResultSet rs) throws SQLException {
-        // PostgreSQL TEXT[] → Java Set<String>
         Array segmentsArray = rs.getArray("target_segments");
         Array sizesArray = rs.getArray("creative_sizes");
 
@@ -94,19 +88,12 @@ public final class PostgresCampaignRepository implements CampaignRepository, Aut
 
     private Set<String> arrayToSet(Array sqlArray) throws SQLException {
         if (sqlArray == null) return Set.of();
-        String[] values = (String[]) sqlArray.getArray();
-        return Set.of(values);
-    }
-
-    @Override
-    public void close() {
-        if (connection != null) {
-            try {
-                connection.close();
-                logger.info("PostgreSQL connection closed");
-            } catch (SQLException e) {
-                logger.warn("Failed to close PostgreSQL connection: {}", e.getMessage());
-            }
+        try {
+            String[] values = (String[]) sqlArray.getArray();
+            // Set.of() throws on duplicates — use LinkedHashSet for safety
+            return Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList(values)));
+        } finally {
+            sqlArray.free();
         }
     }
 }

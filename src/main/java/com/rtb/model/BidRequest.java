@@ -7,7 +7,8 @@ public record BidRequest(
         String userId,
         App app,
         Device device,
-        List<AdSlot> adSlots
+        List<AdSlot> adSlots,
+        String contextText
 ) {
 
     public record App(

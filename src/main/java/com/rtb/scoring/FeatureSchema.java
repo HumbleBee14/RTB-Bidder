@@ -48,7 +48,10 @@ public final class FeatureSchema {
             } else {
                 try (InputStream is = FeatureSchema.class.getClassLoader().getResourceAsStream(schemaPath)) {
                     if (is == null) {
-                        throw new IllegalArgumentException("Feature schema not found: " + schemaPath);
+                        throw new IllegalArgumentException(
+                                "Feature schema not found: " + schemaPath + "\n" +
+                                "  This file is required for ML scoring.\n" +
+                                "  Or set scoring.type=feature-weighted to skip ML scoring");
                     }
                     schema = mapper.readValue(is, Map.class);
                 }

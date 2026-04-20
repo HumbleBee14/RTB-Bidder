@@ -256,6 +256,18 @@ scoring.type=abtest
 scoring.abtest.treatment.percentage=50
 ```
 
+## Prerequisites — generating the model
+
+The ONNX model and feature schema are NOT committed to git. They must be generated before using `scoring.type=ml`, `scoring.type=abtest`, or `scoring.type=cascade`. If missing, the server fails fast:
+
+```
+ONNX model not found: ml/pctr_model.onnx
+  Generate it with: python ml/train_pctr_model.py
+  Or set scoring.type=feature-weighted to skip ML scoring
+```
+
+Default config (`scoring.type=feature-weighted`) works without any Python setup.
+
 ## How to retrain
 
 ```bash

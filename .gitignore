@@ -1,4 +1,6 @@
 target/
+ml/*.json
+ml/*.onnx
 logs/
 .env
 .idea/

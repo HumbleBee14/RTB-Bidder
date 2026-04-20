@@ -10,5 +10,14 @@ public interface BudgetPacer {
 
     boolean trySpend(String campaignId, double amount);
 
+    /**
+     * Overload that includes the quality score (pCTR × value) of the winning candidate.
+     * Default delegates to the unscored version — pacers that want quality-based
+     * throttling (e.g., QualityThrottledBudgetPacer) override this.
+     */
+    default boolean trySpend(String campaignId, double amount, double qualityScore) {
+        return trySpend(campaignId, amount);
+    }
+
     double remainingBudget(String campaignId);
 }

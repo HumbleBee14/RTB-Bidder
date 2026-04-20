@@ -288,3 +288,18 @@ curl http://localhost:8080/click?bid_id=test-123
 # Verify events in Kafka
 docker exec java-rtb-bidder-kafka-1 bash -c "/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic win-events --from-beginning --timeout-ms 5000"
 ```
+
+## Later enhancement: tracking URLs carry user/campaign/slot context
+
+When Phase 8 was first built, the tracking endpoints only received `bid_id` as a query param — so `ImpressionEvent` and `ClickEvent` had `null` for `userId`, `campaignId`, and `slotId`. That made downstream analytics (e.g., CTR by campaign in ClickHouse) impossible.
+
+Fix (Phase 15 cleanup): `ResponseBuildStage` now embeds all four IDs in the tracking URLs:
+
+```
+https://bidder.example.com/impression?bid_id=<uuid>&user_id=<id>&campaign_id=<id>&slot_id=<id>
+https://bidder.example.com/click?bid_id=<uuid>&user_id=<id>&campaign_id=<id>&slot_id=<id>
+```
+
+`TrackingHandler` reads all four from the request params and publishes complete events.
+
+Why query params and not a bid-cache lookup? A cache would require storing every bid_id → context mapping (Redis, ~1h TTL). At 50K RPS × 1h = 180M entries, plus an extra Redis hit on the tracking hot path. The URL-embedding approach has zero lookup cost — the exchange/browser passes the context back when it pings the URL. This is how real ad-tech does it (standard OpenRTB tracking URL pattern).

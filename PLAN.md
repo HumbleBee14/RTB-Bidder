@@ -208,7 +208,7 @@ These wrap the existing `BudgetPacer` interface via decorator pattern. Zero pipe
 | **Hourly pacing** | Spreads budget evenly across the day ($1000/day = ~$42/hour) | Without it, morning traffic spike can burn entire budget in 1 hour | ✅ DONE — `HourlyPacedBudgetPacer` decorator |
 | **Spend smoothing** | Gradually reduces bid rate as budget depletes (80% spent → bid 50% of requests) | Avoids hard cliff when budget hits zero — smoother campaign delivery | ✅ DONE — built into `HourlyPacedBudgetPacer` (80-95% ramp-down) |
 | **Budget monitoring** | Tracks spend/exhaustion/throttle counts per campaign | Operations visibility — catch runaway spend before damage | ✅ DONE — `BudgetMetrics` counters wired into pacers. TODO: Micrometer gauges in Phase 9 |
-| **ML-driven throttling** | Adjusts bid rate based on predicted conversion value | Spend more during high-value hours, conserve during low-value | ❌ PENDING — needs Scorer + Pacer coordination, TODO in code |
+| **ML-driven throttling** | Adjusts bid rate based on predicted conversion value | Spend more during high-value hours, conserve during low-value | ✅ DONE — `QualityThrottledBudgetPacer` decorator (Phase 15) |
 
 Refs:
 - [Optimal Budget Pacing for RTB](http://www0.cs.ucl.ac.uk/staff/w.zhang/rtb-papers/opt-rtb-pacing.pdf)
@@ -376,6 +376,26 @@ This is how every ad network works. Without win + impression + click tracking, y
 
 ---
 
+## Phase 15: ML-Driven Quality Throttling
+**Goal**: Use the pCTR score from the ML scorer to throttle low-quality bids, saving budget for high-value opportunities. Completes the "ML-driven throttling" item parked in Phase 7.
+
+**What you build**:
+- `pacing/QualityThrottledBudgetPacer.java` — decorator wrapping any `BudgetPacer`. Reads the winner's score from `AdCandidate` (already set by `ScoringStage`) and decides whether to attempt the spend.
+  - `score >= highThreshold` → always spend
+  - `score < lowThreshold` → always skip (save budget)
+  - Middle → probabilistic spend, linearly interpolated
+- `pacing/BudgetPacer.java` — added `trySpend(id, amount, score)` default method for backward compatibility
+- `pipeline/stages/BudgetPacingStage.java` — passes winner's score to the new trySpend overload
+- Wire via `pacing.quality.throttling.enabled=true` in config (default: disabled)
+
+**What you learn**: How ML scores feed back into budget decisions — the pCTR flowing from Scoring → Ranking → Pacing via `AdCandidate.score`. Why decorator pattern scales: five layers of pacing composition (local/distributed → hourly → quality) with zero pipeline changes. When to enable throttling (ML scorer + tight budgets) and when not to (feature-weighted scorer — scores aren't real pCTR).
+
+**Test**: Set `SCORING_TYPE=ml PACING_QUALITY_THROTTLING_ENABLED=true`. Send mixed-quality requests, observe low-pCTR skipped (HTTP 204 with `BUDGET_EXHAUSTED`), high-pCTR served.
+
+**Commit**: `phase-15: ML-driven quality throttling — pCTR-based pacer decorator`
+
+---
+
 ## Phase Summary
 
 | Phase | What works after this | Key pattern / ad-tech concept |
@@ -396,6 +416,7 @@ This is how every ad network works. Without win + impression + click tracking, y
 | 12 | Performance proven with real numbers | Load testing (k6), flame graphs, GC analysis |
 | 13 | Full data layer: PostgreSQL campaigns + ClickHouse analytics | Decorator pattern, columnar analytics |
 | 14 | Live Grafana dashboard | Prometheus, PromQL, production dashboards |
+| 15 | ML pCTR scores throttle low-quality bids | Quality-based pacing, decorator stacking, Scorer+Pacer coordination |
 
 **Phases 1-7**: Core bidder — targeting, capping, scoring, pacing. ~2 days.
 **Phases 8-10**: Production features — events, metrics, resilience. ~1 day.

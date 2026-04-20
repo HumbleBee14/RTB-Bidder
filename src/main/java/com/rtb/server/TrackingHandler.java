@@ -33,7 +33,13 @@ public final class TrackingHandler {
             return;
         }
 
-        logger.info("Impression: bidId={}", bidId);
+        // User/campaign/slot IDs come from query params — ResponseBuildStage embeds these
+        // in the tracking URLs. Avoids a bid-cache lookup on the tracking hot path.
+        String userId = ctx.request().getParam("user_id");
+        String campaignId = ctx.request().getParam("campaign_id");
+        String slotId = ctx.request().getParam("slot_id");
+
+        logger.info("Impression: bidId={} campaignId={}", bidId, campaignId);
 
         ctx.response()
                 .putHeader("Content-Type", "image/gif")
@@ -41,8 +47,7 @@ public final class TrackingHandler {
                 .setStatusCode(200)
                 .end(TRACKING_PIXEL);
 
-        // TODO: look up userId, campaignId, slotId from bid cache (keyed by bidId)
-        eventPublisher.publishImpression(new ImpressionEvent(bidId, null, null, null, Instant.now()));
+        eventPublisher.publishImpression(new ImpressionEvent(bidId, userId, campaignId, slotId, Instant.now()));
     }
 
     public void handleClick(RoutingContext ctx) {
@@ -52,14 +57,17 @@ public final class TrackingHandler {
             return;
         }
 
-        logger.info("Click: bidId={}", bidId);
+        String userId = ctx.request().getParam("user_id");
+        String campaignId = ctx.request().getParam("campaign_id");
+        String slotId = ctx.request().getParam("slot_id");
+
+        logger.info("Click: bidId={} campaignId={}", bidId, campaignId);
 
         ctx.response()
                 .putHeader("Content-Type", "application/json")
                 .setStatusCode(200)
                 .end("{\"status\":\"click_tracked\",\"bid_id\":\"" + bidId.replace("\"", "\\\"") + "\"}");
 
-        // TODO: look up userId, campaignId, slotId from bid cache (keyed by bidId)
-        eventPublisher.publishClick(new ClickEvent(bidId, null, null, null, Instant.now()));
+        eventPublisher.publishClick(new ClickEvent(bidId, userId, campaignId, slotId, Instant.now()));
     }
 }

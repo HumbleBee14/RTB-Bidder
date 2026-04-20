@@ -76,9 +76,12 @@ public final class EmbeddingTargetingEngine implements TargetingEngine {
         return candidates;
     }
 
-    /** Average word embeddings from context_text to create a pseudo-sentence embedding. */
+    /**
+     * Average word embeddings from context_text to create a pseudo-sentence embedding.
+     * Simpler than loading a sentence-transformer model via ONNX — see phase-4.5 docs
+     * for the "future enhancements" note on when to upgrade.
+     */
     private float[] computeContextEmbedding(String contextText) {
-        // TODO: replace with ONNX-based sentence-transformers for production-grade embeddings
         String[] words = contextText.toLowerCase().split("\\W+");
         float[] sum = new float[embeddingDim];
         int count = 0;

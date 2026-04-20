@@ -57,10 +57,11 @@ public final class BudgetPacingStage implements PipelineStage {
     /** Try the winner first, then iterate ALL fallback candidates by score until one succeeds. */
     private AdCandidate trySpendOrFallback(AdCandidate winner, List<AdCandidate> allCandidates,
                                            BidRequest.AdSlot slot, Set<String> usedCampaigns) {
-        // Try the original winner first
+        // Try the original winner first. Pass the candidate's score — quality-aware pacers
+        // (QualityThrottledBudgetPacer) use this to throttle low-pCTR spends.
         double bidPrice = Math.max(winner.getCampaign().bidFloor(), slot.bidFloor());
         if (!usedCampaigns.contains(winner.getCampaign().id())
-                && budgetPacer.trySpend(winner.getCampaign().id(), bidPrice)) {
+                && budgetPacer.trySpend(winner.getCampaign().id(), bidPrice, winner.getScore())) {
             return winner;
         }
 
@@ -75,7 +76,7 @@ public final class BudgetPacingStage implements PipelineStage {
             }
 
             double fallbackPrice = Math.max(fallback.getCampaign().bidFloor(), slot.bidFloor());
-            if (budgetPacer.trySpend(fallback.getCampaign().id(), fallbackPrice)) {
+            if (budgetPacer.trySpend(fallback.getCampaign().id(), fallbackPrice, fallback.getScore())) {
                 return fallback;
             }
 

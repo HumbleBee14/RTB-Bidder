@@ -76,8 +76,8 @@ public final class HourlyPacedBudgetPacer implements BudgetPacer {
             }
         }
 
-        // TODO: ML-driven throttling — adjust bid probability based on predicted conversion value
-        // from Scorer, spend more during high-conversion hours. Requires Scorer + Pacer coordination.
+        // Note: ML-driven quality throttling is implemented in QualityThrottledBudgetPacer (Phase 15),
+        // which wraps this pacer as an outer decorator when pacing.quality.throttling.enabled=true.
 
         // Passed hourly pacing check → try the actual budget decrement
         boolean success = delegate.trySpend(campaignId, amount);

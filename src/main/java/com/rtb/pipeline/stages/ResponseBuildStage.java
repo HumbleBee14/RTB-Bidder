@@ -8,6 +8,8 @@ import com.rtb.model.NoBidReason;
 import com.rtb.pipeline.BidContext;
 import com.rtb.pipeline.PipelineStage;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +32,8 @@ public final class ResponseBuildStage implements PipelineStage {
             return;
         }
 
+        String userId = ctx.getRequest().userId();
+
         List<BidResponse.SlotBid> bids = new ArrayList<>(slotWinners.size());
         for (Map.Entry<BidRequest.AdSlot, AdCandidate> entry : slotWinners.entrySet()) {
             BidRequest.AdSlot slot = entry.getKey();
@@ -43,6 +47,14 @@ public final class ResponseBuildStage implements PipelineStage {
             String matchedSize = findMatchingSize(campaign, slot);
             int[] dimensions = parseSize(matchedSize);
 
+            // Tracking URLs embed user/campaign/slot IDs as query params —
+            // standard ad-tech pattern, so TrackingHandler can publish complete events
+            // without needing a bid-cache lookup on the hot tracking path.
+            String trackingParams = "bid_id=" + urlEncode(bidId)
+                    + "&user_id=" + urlEncode(userId)
+                    + "&campaign_id=" + urlEncode(campaign.id())
+                    + "&slot_id=" + urlEncode(slot.id());
+
             bids.add(new BidResponse.SlotBid(
                     bidId,
                     slot.id(),
@@ -52,14 +64,18 @@ public final class ResponseBuildStage implements PipelineStage {
                     dimensions[1],
                     campaign.creativeUrl(),
                     new BidResponse.TrackingUrls(
-                            baseUrl + "/impression?bid_id=" + bidId,
-                            baseUrl + "/click?bid_id=" + bidId
+                            baseUrl + "/impression?" + trackingParams,
+                            baseUrl + "/click?" + trackingParams
                     ),
                     campaign.advertiserDomain()
             ));
         }
 
         ctx.setResponse(new BidResponse(bids));
+    }
+
+    private static String urlEncode(String value) {
+        return value == null ? "" : URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private String findMatchingSize(Campaign campaign, BidRequest.AdSlot slot) {

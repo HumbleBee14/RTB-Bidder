@@ -26,6 +26,7 @@ import com.rtb.pacing.BudgetPacer;
 import com.rtb.pacing.DistributedBudgetPacer;
 import com.rtb.pacing.HourlyPacedBudgetPacer;
 import com.rtb.pacing.LocalBudgetPacer;
+import com.rtb.pacing.QualityThrottledBudgetPacer;
 import com.rtb.pipeline.stages.BudgetPacingStage;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
 import com.rtb.pipeline.stages.FrequencyCapStage;
@@ -254,8 +255,18 @@ public final class Application {
         boolean hourlyPacing = config.getBoolean("pacing.hourly.enabled", false);
         if (hourlyPacing) {
             int hours = config.getInt("pacing.hourly.hours", 24);
-            return new HourlyPacedBudgetPacer(basePacer, hours, metrics);
+            basePacer = new HourlyPacedBudgetPacer(basePacer, hours, metrics);
         }
+
+        // Quality throttling decorator — applied last so it sees the effective budget after hourly pacing
+        boolean qualityThrottling = config.getBoolean("pacing.quality.throttling.enabled", false);
+        if (qualityThrottling) {
+            double lowThreshold = Double.parseDouble(config.get("pacing.quality.threshold.low", "0.05"));
+            double highThreshold = Double.parseDouble(config.get("pacing.quality.threshold.high", "0.20"));
+            logger.info("Quality-throttled pacing enabled: low={}, high={}", lowThreshold, highThreshold);
+            return new QualityThrottledBudgetPacer(basePacer, lowThreshold, highThreshold);
+        }
+
         return basePacer;
     }
 

@@ -59,8 +59,9 @@
         </then>
     </if>
 
-    <!-- ── Log levels ── -->
-    <logger name="com.rtb" level="INFO"/>
+    <!-- ── Log levels — override with -Drtb.log.level=WARN for load tests ── -->
+    <variable name="RTB_LOG_LEVEL" value="${rtb.log.level:-INFO}"/>
+    <logger name="com.rtb" level="${RTB_LOG_LEVEL}"/>
     <logger name="io.vertx" level="WARN"/>
     <logger name="io.netty" level="WARN"/>
 

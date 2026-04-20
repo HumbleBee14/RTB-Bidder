@@ -167,6 +167,9 @@ components:
               bid_floor:
                 type: number
                 format: double
+        context_text:
+          type: string
+          description: Optional AI-chat conversation context for embedding-based targeting
 
     BidResponse:
       type: object

@@ -112,6 +112,18 @@ CandidateRetrieval: 2.693ms  ← embedding cosine similarity
 | Beach vacation | "planning a vacation to the beach" | Nike (camp-001) | Embedding matched |
 | No context | (none) | HealthPlus (camp-008) | Segment (fallback) |
 
+## Prerequisites — generating artifacts
+
+The embedding files are NOT committed to git. They must be generated before using `targeting.type=embedding` or `targeting.type=hybrid`. If missing, the server fails fast with an actionable error:
+
+```
+Embeddings not found: ml/campaign_embeddings.json
+  Generate with: python ml/generate_embeddings.py
+  Or set targeting.type=segment to skip embedding targeting
+```
+
+Default config (`targeting.type=segment`) works without any Python setup.
+
 ## How to generate embeddings
 
 ```bash

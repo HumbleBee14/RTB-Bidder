@@ -72,7 +72,7 @@ public final class EmbeddingTargetingEngine implements TargetingEngine {
             }
         }
 
-        logger.debug("Embedding targeting: contextText='{}', matches={}", contextText, candidates.size());
+        logger.debug("Embedding targeting: contextLength={}, matches={}", contextText.length(), candidates.size());
         return candidates;
     }
 
@@ -131,20 +131,30 @@ public final class EmbeddingTargetingEngine implements TargetingEngine {
                 raw = mapper.readValue(filePath.toFile(), new TypeReference<>() {});
             } else {
                 var is = getClass().getClassLoader().getResourceAsStream(path);
-                if (is == null) throw new IllegalArgumentException("Embeddings not found: " + path);
+                if (is == null) throw new IllegalArgumentException(
+                        "Embeddings not found: " + path + "\n" +
+                        "  Generate with: python ml/generate_embeddings.py\n" +
+                        "  Or set targeting.type=segment to skip embedding targeting");
                 try (is) {
                     raw = mapper.readValue(is, new TypeReference<>() {});
                 }
             }
 
             Map<String, float[]> result = new java.util.HashMap<>();
+            int expectedDim = -1;
             for (var entry : raw.entrySet()) {
                 List<Double> values = entry.getValue();
+                if (expectedDim == -1) {
+                    expectedDim = values.size();
+                } else if (values.size() != expectedDim) {
+                    logger.warn("Skipping embedding '{}': dim {} != expected {}", entry.getKey(), values.size(), expectedDim);
+                    continue;
+                }
                 float[] arr = new float[values.size()];
                 for (int i = 0; i < values.size(); i++) {
                     arr[i] = values.get(i).floatValue();
                 }
-                result.put(entry.getKey(), arr);
+                result.put(entry.getKey().toLowerCase(), arr);
             }
             return result;
         } catch (IOException e) {

@@ -34,6 +34,13 @@ public final class MLScorer implements Scorer, AutoCloseable {
     public MLScorer(String modelPath, FeatureSchema schema) {
         this.schema = schema;
         try {
+            java.nio.file.Path path = java.nio.file.Path.of(modelPath);
+            if (!java.nio.file.Files.exists(path)) {
+                throw new RuntimeException(
+                        "ONNX model not found: " + modelPath + "\n" +
+                        "  Generate it with: python ml/train_pctr_model.py\n" +
+                        "  Or set scoring.type=feature-weighted to skip ML scoring");
+            }
             this.env = OrtEnvironment.getEnvironment();
             try (OrtSession.SessionOptions opts = new OrtSession.SessionOptions()) {
                 opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);

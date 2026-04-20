@@ -75,7 +75,7 @@ Exchange keeps sending traffic → revenue continues (reduced precision, not zer
 |-----------|----------|--------|
 | UserSegmentRepository | Return empty segments | No targeting match → 204 no-bid. Bidder serves, just with no personalization. |
 | FrequencyCapper.isAllowed() | Return true (allow) | Over-delivery possible until Redis recovers. Conservative: better to show an ad than block. |
-| FrequencyCapper.recordImpression() | Silently dropped | Redis catches up when it recovers. Frequency counts may be slightly under for the outage window. |
+| FrequencyCapper.recordImpression() | Silently dropped | Frequency counts under-reported for outage window. Over-delivery possible until Redis recovers. |
 
 ### Kafka DOWN
 
@@ -105,7 +105,7 @@ AtomicReference for state + AtomicInteger for failure count = lock-free, no sync
 public final class ResilientRedis implements UserSegmentRepository, FrequencyCapper {
 ```
 
-One circuit breaker protects both segment lookup AND frequency capping — they share the same Redis connection. If Redis is down for segments, it's down for frequency too. One circuit, one state.
+One circuit breaker protects both segment lookup AND frequency capping — they target the same Redis dependency. If Redis is down for segments, it's down for frequency too. One circuit, one state. (They use separate Lettuce connections internally, but the dependency is the same Redis instance.)
 
 ### ResilientEventPublisher wraps any EventPublisher
 

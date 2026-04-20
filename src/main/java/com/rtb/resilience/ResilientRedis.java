@@ -14,7 +14,7 @@ import java.util.Set;
  * When Redis is down:
  *   - getSegments() → returns empty set (user gets no targeting, not a crash)
  *   - isAllowed() → returns true (allow bid, don't block on freq check)
- *   - recordImpression() → silently dropped (Redis will catch up when it recovers)
+ *   - recordImpression() → silently dropped (freq counts under-reported for outage window)
  *
  * Graceful degradation: the bidder keeps serving ads with reduced precision
  * rather than failing every request because Redis is slow.

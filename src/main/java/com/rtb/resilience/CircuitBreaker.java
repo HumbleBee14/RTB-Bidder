@@ -40,6 +40,12 @@ public final class CircuitBreaker {
     private final AtomicLong totalTrips = new AtomicLong(0);
 
     public CircuitBreaker(String name, int failureThreshold, long cooldownMs, long windowMs) {
+        if (failureThreshold < 1) {
+            throw new IllegalArgumentException("failureThreshold must be >= 1, got: " + failureThreshold);
+        }
+        if (cooldownMs < 100) {
+            throw new IllegalArgumentException("cooldownMs must be >= 100, got: " + cooldownMs);
+        }
         this.name = name;
         this.failureThreshold = failureThreshold;
         this.cooldownMs = cooldownMs;
@@ -57,6 +63,12 @@ public final class CircuitBreaker {
             if (shouldAttemptReset()) {
                 return tryHalfOpen(operation, fallback);
             }
+            return fallback.get();
+        }
+
+        // HALF_OPEN: only the thread that won the CAS in tryHalfOpen runs the test call.
+        // All other threads arriving here while HALF_OPEN get fallback.
+        if (currentState == State.HALF_OPEN) {
             return fallback.get();
         }
 
@@ -119,12 +131,10 @@ public final class CircuitBreaker {
 
         int failures = failureCount.incrementAndGet();
 
-        if (state.get() == State.HALF_OPEN) {
-            state.set(State.OPEN);
+        if (state.compareAndSet(State.HALF_OPEN, State.OPEN)) {
             totalTrips.incrementAndGet();
             logger.warn("Circuit breaker [{}]: HALF_OPEN → OPEN (test failed: {})", name, e.getMessage());
-        } else if (failures >= failureThreshold) {
-            state.set(State.OPEN);
+        } else if (failures >= failureThreshold && state.compareAndSet(State.CLOSED, State.OPEN)) {
             totalTrips.incrementAndGet();
             logger.warn("Circuit breaker [{}]: CLOSED → OPEN after {} failures in {}s window ({})",
                     name, failures, windowMs / 1000, e.getMessage());

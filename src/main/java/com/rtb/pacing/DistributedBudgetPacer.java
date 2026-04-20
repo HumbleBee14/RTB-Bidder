@@ -51,7 +51,7 @@ public final class DistributedBudgetPacer implements BudgetPacer, AutoCloseable 
         // Seed budgets into Redis (only if not already set)
         for (Campaign campaign : campaignRepository.getActiveCampaigns()) {
             String key = "budget:" + campaign.id();
-            long budgetMicros = (long) (campaign.budget() * MICRODOLLAR);
+            long budgetMicros = Math.round(campaign.budget() * MICRODOLLAR);
             commands.setnx(key, String.valueOf(budgetMicros));
         }
         logger.info("DistributedBudgetPacer connected to Redis: {}:{}", uri.getHost(), uri.getPort());

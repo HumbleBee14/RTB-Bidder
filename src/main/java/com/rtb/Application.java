@@ -169,7 +169,6 @@ public final class Application {
         boolean hourlyPacing = config.getBoolean("pacing.hourly.enabled", false);
         if (hourlyPacing) {
             int hours = config.getInt("pacing.hourly.hours", 24);
-            logger.info("Hourly pacing enabled: spreading across {} hours with spend smoothing", hours);
             return new HourlyPacedBudgetPacer(basePacer, hours, metrics);
         }
         return basePacer;

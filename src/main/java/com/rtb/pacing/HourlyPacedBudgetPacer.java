@@ -6,8 +6,6 @@ import org.slf4j.LoggerFactory;
 import java.time.LocalTime;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Decorator that adds hourly pacing and spend smoothing on top of any BudgetPacer.
@@ -38,6 +36,9 @@ public final class HourlyPacedBudgetPacer implements BudgetPacer {
     private final ConcurrentHashMap<String, HourlySpend> hourlySpends = new ConcurrentHashMap<>();
 
     public HourlyPacedBudgetPacer(BudgetPacer delegate, int pacingHours, BudgetMetrics metrics) {
+        if (pacingHours < 1 || pacingHours > 24) {
+            throw new IllegalArgumentException("pacing.hourly.hours must be 1-24, got: " + pacingHours);
+        }
         this.delegate = delegate;
         this.pacingHours = pacingHours;
         this.metrics = metrics;
@@ -91,25 +92,25 @@ public final class HourlyPacedBudgetPacer implements BudgetPacer {
         return delegate.remainingBudget(campaignId);
     }
 
-    /** Tracks spend within the current hour for one campaign. Thread-safe. */
+    /** Tracks spend within the current hour for one campaign. Synchronized for hour rollover safety. */
     private static final class HourlySpend {
         private static final long MICRODOLLAR = 1_000_000L;
-        private final AtomicInteger currentHour = new AtomicInteger(-1);
-        private final AtomicLong spentMicros = new AtomicLong(0);
+        private int currentHour = -1;
+        private long spentMicros = 0;
 
-        void resetIfNewHour(int hour) {
-            if (currentHour.get() != hour) {
-                currentHour.set(hour);
-                spentMicros.set(0);
+        synchronized void resetIfNewHour(int hour) {
+            if (currentHour != hour) {
+                currentHour = hour;
+                spentMicros = 0;
             }
         }
 
-        void recordSpend(double amount) {
-            spentMicros.addAndGet(Math.round(amount * MICRODOLLAR));
+        synchronized void recordSpend(double amount) {
+            spentMicros += Math.round(amount * MICRODOLLAR);
         }
 
-        double getSpentDollars() {
-            return spentMicros.get() / (double) MICRODOLLAR;
+        synchronized double getSpentDollars() {
+            return spentMicros / (double) MICRODOLLAR;
         }
     }
 }

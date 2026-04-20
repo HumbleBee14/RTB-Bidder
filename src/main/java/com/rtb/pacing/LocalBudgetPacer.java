@@ -25,7 +25,7 @@ public final class LocalBudgetPacer implements BudgetPacer {
     public LocalBudgetPacer(CampaignRepository campaignRepository, BudgetMetrics metrics) {
         this.metrics = metrics;
         for (Campaign campaign : campaignRepository.getActiveCampaigns()) {
-            long budgetMicros = (long) (campaign.budget() * MICRODOLLAR);
+            long budgetMicros = Math.round(campaign.budget() * MICRODOLLAR);
             budgets.put(campaign.id(), new AtomicLong(budgetMicros));
         }
         logger.info("Initialized budgets for {} campaigns", budgets.size());

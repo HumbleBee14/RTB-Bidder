@@ -41,17 +41,19 @@ This completes the core pipeline — all 8 stages from the plan are now in place
 
 Budgets are stored as `long` microdollars ($1.00 = 1,000,000 microdollars) instead of `double`. `AtomicLong` doesn't support floating-point, and `double` arithmetic has precision issues at scale. $5000.00 budget after 10,000 deductions of $0.50 should be exactly $0.00, not $0.000000001.
 
-### Why atomic decrement with rollback?
+### Why CAS loop instead of decrement + rollback?
 
 ```java
-long remaining = budget.addAndGet(-amountMicros);
-if (remaining < 0) {
-    budget.addAndGet(amountMicros);  // rollback
-    return false;
-}
+// CAS loop — zero race window
+long current, next;
+do {
+    current = budget.get();
+    next = current - amountMicros;
+    if (next < 0) return false;           // check BEFORE decrementing
+} while (!budget.compareAndSet(current, next)); // atomic swap
 ```
 
-Two bidder threads spending the last $1 simultaneously: both call `addAndGet(-1)`. One gets 0 (success), the other gets -1 (overspent → rollback). No locks, no CAS loops, O(1).
+The rollback approach (`addAndGet(-amount)` then `addAndGet(+amount)` if negative) has a race window — two threads can both overshoot, both rollback, and neither spends. CAS checks BEFORE writing: only one thread wins the swap, losers retry with the updated value.
 
 ### Why Lua script for distributed?
 

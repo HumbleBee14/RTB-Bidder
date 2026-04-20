@@ -15,8 +15,8 @@ import java.util.Set;
 
 /**
  * Attempts to spend budget for each slot's winner.
- * If the winner's budget is exhausted, falls back to the next eligible candidate.
- * Runs AFTER RankingStage — re-validates the winners against budget constraints.
+ * If the winner's budget is exhausted, iterates through ALL fallback candidates
+ * until one succeeds or all are exhausted.
  */
 public final class BudgetPacingStage implements PipelineStage {
 
@@ -37,25 +37,13 @@ public final class BudgetPacingStage implements PipelineStage {
             BidRequest.AdSlot slot = entry.getKey();
             AdCandidate winner = entry.getValue();
 
-            double bidPrice = Math.max(winner.getCampaign().bidFloor(), slot.bidFloor());
-
-            if (budgetPacer.trySpend(winner.getCampaign().id(), bidPrice)) {
-                confirmedWinners.put(slot, winner);
-                usedCampaigns.add(winner.getCampaign().id());
-            } else {
-                // Budget exhausted — try fallback candidates for this slot
-                AdCandidate fallback = findFallback(allCandidates, slot, usedCampaigns);
-                if (fallback != null) {
-                    double fallbackPrice = Math.max(fallback.getCampaign().bidFloor(), slot.bidFloor());
-                    if (budgetPacer.trySpend(fallback.getCampaign().id(), fallbackPrice)) {
-                        confirmedWinners.put(slot, fallback);
-                        usedCampaigns.add(fallback.getCampaign().id());
-                    }
-                }
+            AdCandidate confirmed = trySpendOrFallback(winner, allCandidates, slot, usedCampaigns);
+            if (confirmed != null) {
+                confirmedWinners.put(slot, confirmed);
+                usedCampaigns.add(confirmed.getCampaign().id());
             }
         }
 
-        // Replace slot winners with budget-confirmed winners
         ctx.getSlotWinners().clear();
         for (Map.Entry<BidRequest.AdSlot, AdCandidate> entry : confirmedWinners.entrySet()) {
             ctx.setSlotWinner(entry.getKey(), entry.getValue());
@@ -66,11 +54,41 @@ public final class BudgetPacingStage implements PipelineStage {
         }
     }
 
-    private AdCandidate findFallback(List<AdCandidate> candidates, BidRequest.AdSlot slot,
-                                     Set<String> usedCampaigns) {
+    /** Try the winner first, then iterate ALL fallback candidates by score until one succeeds. */
+    private AdCandidate trySpendOrFallback(AdCandidate winner, List<AdCandidate> allCandidates,
+                                           BidRequest.AdSlot slot, Set<String> usedCampaigns) {
+        // Try the original winner first
+        double bidPrice = Math.max(winner.getCampaign().bidFloor(), slot.bidFloor());
+        if (!usedCampaigns.contains(winner.getCampaign().id())
+                && budgetPacer.trySpend(winner.getCampaign().id(), bidPrice)) {
+            return winner;
+        }
+
+        // Iterate all candidates sorted by score, try each until one succeeds
+        Set<String> tried = new HashSet<>();
+        tried.add(winner.getCampaign().id());
+
+        while (true) {
+            AdCandidate fallback = findNextBest(allCandidates, slot, usedCampaigns, tried);
+            if (fallback == null) {
+                return null;
+            }
+
+            double fallbackPrice = Math.max(fallback.getCampaign().bidFloor(), slot.bidFloor());
+            if (budgetPacer.trySpend(fallback.getCampaign().id(), fallbackPrice)) {
+                return fallback;
+            }
+
+            tried.add(fallback.getCampaign().id());
+        }
+    }
+
+    private AdCandidate findNextBest(List<AdCandidate> candidates, BidRequest.AdSlot slot,
+                                     Set<String> usedCampaigns, Set<String> tried) {
         AdCandidate best = null;
         for (AdCandidate candidate : candidates) {
             if (candidate.getScore() < 0) continue;
+            if (tried.contains(candidate.getCampaign().id())) continue;
             if (usedCampaigns.contains(candidate.getCampaign().id())) continue;
             if (!candidate.getCampaign().fitsSlot(slot.sizes())) continue;
             if (candidate.getCampaign().bidFloor() < slot.bidFloor()) continue;

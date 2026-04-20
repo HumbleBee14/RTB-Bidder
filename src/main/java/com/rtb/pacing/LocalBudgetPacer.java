@@ -9,12 +9,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Single-instance budget pacing using AtomicLong for lock-free atomic decrements.
+ * Single-instance budget pacing using AtomicLong with CAS loop for lock-free atomic decrements.
  *
- * Budgets are stored as microdollars (budget × 1_000_000) to avoid floating-point
- * precision issues with AtomicLong. $5000.00 = 5_000_000_000 microdollars.
- *
- * Thread-safe: ConcurrentHashMap + AtomicLong.decrementAndGet = no locks.
+ * Budgets stored as microdollars (budget × 1_000_000) to avoid floating-point precision issues.
+ * Thread-safe: ConcurrentHashMap + AtomicLong.compareAndSet = lock-free, race-free.
  */
 public final class LocalBudgetPacer implements BudgetPacer {
 
@@ -23,7 +21,6 @@ public final class LocalBudgetPacer implements BudgetPacer {
 
     private final ConcurrentHashMap<String, AtomicLong> budgets = new ConcurrentHashMap<>();
 
-    /** Initialize budgets from campaign repository at startup. */
     public LocalBudgetPacer(CampaignRepository campaignRepository) {
         for (Campaign campaign : campaignRepository.getActiveCampaigns()) {
             long budgetMicros = (long) (campaign.budget() * MICRODOLLAR);
@@ -39,15 +36,20 @@ public final class LocalBudgetPacer implements BudgetPacer {
             return false;
         }
 
-        long amountMicros = (long) (amount * MICRODOLLAR);
-        long remaining = budget.addAndGet(-amountMicros);
+        long amountMicros = Math.round(amount * MICRODOLLAR);
+        if (amountMicros <= 0) return false;
 
-        if (remaining < 0) {
-            // Overspent — roll back
-            budget.addAndGet(amountMicros);
-            logger.info("Budget exhausted: campaign={}", campaignId);
-            return false;
-        }
+        // CAS loop — true atomic decrement, no race window
+        long current;
+        long next;
+        do {
+            current = budget.get();
+            next = current - amountMicros;
+            if (next < 0) {
+                logger.debug("Budget exhausted: campaign={}", campaignId);
+                return false;
+            }
+        } while (!budget.compareAndSet(current, next));
 
         return true;
     }

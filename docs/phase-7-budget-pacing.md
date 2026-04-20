@@ -107,6 +107,55 @@ BudgetPacing adds 0.03ms (pure in-memory AtomicLong). Negligible in the 50ms SLA
 | Unknown user | 204 NO_MATCHING_CAMPAIGN |
 | 8 stages in pipeline log | All visible with timing |
 
+## Implementation Details
+
+### CAS loop vs rollback pattern
+
+The original implementation used `addAndGet(-amount)` + check + `addAndGet(+amount)` rollback. This has a race window: two threads can both overshoot, both detect negative, both roll back — budget ends at original value, neither spends. The CAS (Compare-And-Set) loop eliminates this:
+
+```java
+do {
+    current = budget.get();
+    next = current - amountMicros;
+    if (next < 0) return false;      // check BEFORE decrementing
+} while (!budget.compareAndSet(current, next));  // atomic swap
+```
+
+Only one thread can win the CAS. Losers retry with the updated value. Zero race window.
+
+### Microdollar conversion: Math.round, not cast
+
+`(long)(0.3 * 1_000_000)` = `299999` (truncation due to IEEE 754 double representation). `Math.round(0.3 * 1_000_000)` = `300000` (correct). At 50K QPS, truncation under-deducts ~$0.01 per second = $864/day lost tracking.
+
+### Config-driven pacer selection
+
+```properties
+pacing.type=local         # single instance (AtomicLong)
+pacing.type=distributed   # multi-instance (Redis DECRBY)
+```
+
+### Exhaustion fallback: iterates ALL candidates, not just one
+
+When the winner's budget is exhausted, BudgetPacingStage loops through all remaining candidates by score until one succeeds or all are exhausted. No money left on the table.
+
+## What production systems do beyond total budget
+
+Our implementation enforces total campaign budget. Production systems add:
+
+| Feature | What it does | Why |
+|---------|-------------|-----|
+| **Hourly pacing** | Spend budget evenly across 24 hours | Prevents burning entire budget in morning traffic spike |
+| **Spend smoothing** | Gradual delivery curve, not step function | Avoids throttling during live events |
+| **ML-driven throttling** | Adjust bid rate based on conversion likelihood | Spend more when high-conversion users are active |
+| **Cross-region coordination** | Synchronized pacing service across data centers | Multiple bidder regions share the same budget |
+
+These are future enhancements. Our atomic decrement + fallback is the foundation they build on.
+
+References:
+- [Budget Pacing in RTB](http://www0.cs.ucl.ac.uk/staff/w.zhang/rtb-papers/opt-rtb-pacing.pdf)
+- [Ad Banker Case Study](https://clearcode.cc/portfolio/ad-banker-case-study/)
+- [RTB Data & Revenue Architecture](https://e-mindset.space/blog/ads-platform-part-3-data-revenue/)
+
 ## How to test
 
 ```bash

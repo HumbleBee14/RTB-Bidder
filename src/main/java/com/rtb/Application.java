@@ -10,6 +10,7 @@ import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
 import com.rtb.frequency.RedisFrequencyCapper;
 import com.rtb.pacing.BudgetPacer;
+import com.rtb.pacing.DistributedBudgetPacer;
 import com.rtb.pacing.LocalBudgetPacer;
 import com.rtb.pipeline.stages.BudgetPacingStage;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
@@ -70,7 +71,10 @@ public final class Application {
         }
         RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
-        BudgetPacer budgetPacer = new LocalBudgetPacer(campaignRepo);
+        BudgetPacer budgetPacer = createBudgetPacer(config, redisConfig, campaignRepo);
+        if (budgetPacer instanceof AutoCloseable closeablePacer) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePacer), "shutdown-pacer"));
+        }
 
         // Pipeline stages — 8 stages, executed in order
         List<PipelineStage> stages = List.of(
@@ -142,6 +146,22 @@ public final class Application {
 
         logger.info("Scorer initialized: {}", scorer.name());
         return scorer;
+    }
+
+    private static BudgetPacer createBudgetPacer(AppConfig config, RedisConfig redisConfig,
+                                                    CampaignRepository campaignRepo) {
+        String type = config.get("pacing.type", "local");
+        logger.info("Pacing type: {}", type);
+        return switch (type) {
+            case "distributed" -> {
+                logger.info("Using distributed budget pacer (Redis)");
+                yield new DistributedBudgetPacer(redisConfig, campaignRepo);
+            }
+            default -> {
+                logger.info("Using local budget pacer (AtomicLong)");
+                yield new LocalBudgetPacer(campaignRepo);
+            }
+        };
     }
 
     private static MLScorer createMLScorer(AppConfig config) {

@@ -160,8 +160,12 @@ public final class CircuitBreaker {
 
     public void registerMetrics(MeterRegistry registry) {
         List<Tag> tags = List.of(Tag.of("name", name));
-        registry.gauge("circuit_breaker_state", tags, this,
-                cb -> cb.state.get() == State.CLOSED ? 0 : (cb.state.get() == State.OPEN ? 1 : 0.5));
+        // State as integer: 0=CLOSED, 1=OPEN, 2=HALF_OPEN (for Grafana value mappings)
+        registry.gauge("circuit_breaker_state", tags, this, cb -> switch (cb.state.get()) {
+            case CLOSED -> 0;
+            case OPEN -> 1;
+            case HALF_OPEN -> 2;
+        });
         registry.gauge("circuit_breaker_failures", tags, this, cb -> cb.failureCount.get());
         registry.gauge("circuit_breaker_trips_total", tags, this, cb -> cb.totalTrips.get());
     }

@@ -1,6 +1,10 @@
 package com.rtb.metrics;
 
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.jvm.JvmGcMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics;
+import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics;
+import io.micrometer.core.instrument.binder.system.ProcessorMetrics;
 import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.slf4j.Logger;
@@ -15,7 +19,12 @@ public final class MetricsRegistry {
 
     public MetricsRegistry() {
         this.registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
-        logger.info("Prometheus metrics registry initialized");
+        // Bind JVM + system metrics — exposed as jvm_memory_used_bytes, jvm_gc_pause_seconds, etc.
+        new JvmMemoryMetrics().bindTo(registry);
+        new JvmGcMetrics().bindTo(registry);
+        new JvmThreadMetrics().bindTo(registry);
+        new ProcessorMetrics().bindTo(registry);
+        logger.info("Prometheus metrics registry initialized (with JVM + system metrics)");
     }
 
     public MeterRegistry registry() {

@@ -55,7 +55,7 @@ JIT compilation in the JVM means the first few thousand requests are slow — th
 ```
 Hardware:  Windows 10, Intel i5-8th Gen, 32GB RAM
 JVM:       Java 21, ZGC (generational), -Xms512m -Xmx512m, AlwaysPreTouch
-Server:    Vert.x 4 on Netty, single event loop thread
+Server:    Vert.x 4 on Netty, default event loop pool (2 × cores = 8 threads on this machine)
 Redis:     7-alpine in Docker, localhost
 Kafka:     3.7.0 in Docker, localhost (NoOp publisher — events not sent)
 Data:      10K users seeded in Redis, 10 campaigns in memory
@@ -111,15 +111,17 @@ CandidateRetrieval:    0.1 seconds total / 12,798 calls = 0.01ms average
 BudgetPacing:          0.07 seconds total / 7,308 calls  = 0.01ms average
 ```
 
-FrequencyCap does sync Redis `GET` per candidate. With 5-8 candidates per request, that's 5-8 sequential Redis roundtrips on the single event loop thread. At ~1ms per Redis call × 7 calls = 7ms/request of blocking I/O. Add SMEMBERS for user segments = ~9ms total blocking per request. Single-threaded max = 1000ms / 9ms ≈ 111 RPS. That matches exactly what we see.
+FrequencyCap does sync Redis `GET` per candidate. With 5-8 candidates per request, that's 5-8 sequential Redis roundtrips on whichever event-loop thread handles that request. At ~1ms per Redis call × 7 calls = ~7ms/request of blocking I/O. Add `SMEMBERS` for user segments and the request spends ~9ms blocked on Redis.
+
+Vert.x runs 8 event-loop threads on this machine (2 × 4 cores), but they all share a single `StatefulRedisConnection` with sync commands. The sync `commands()` API serializes calls through one connection — multiple event-loop threads contend on the same Redis socket. This contention, combined with per-request blocking time, makes sync Redis the dominant bottleneck: once enough requests are in flight, event-loop threads spend most of their time waiting on Redis. Per-thread upper bound: 1000ms / 9ms ≈ 111 RPS. Even with 8 threads, the shared connection serializes calls so throughput doesn't scale linearly.
 
 **How production bidders solve this**:
-1. **Async Redis** — Lettuce `async()` or `reactive()` commands. Redis calls don't block the event loop; responses arrive via callback. 10x throughput improvement.
+1. **Async Redis** — Lettuce `async()` or `reactive()` commands. Redis calls don't block event-loop threads; responses arrive via callback. 10x throughput improvement.
 2. **Redis pipelining** — batch all `GET` calls for frequency capping into a single Redis pipeline. 7 sequential roundtrips → 1 roundtrip with 7 commands.
-3. **Multiple event loop threads** — Vert.x can run N event loops (one per core). Each handles requests independently. 4 cores × 120 RPS = ~480 RPS.
+3. **Connection pooling** — multiple Redis connections so event-loop threads don't contend on one socket. Lettuce supports `StatefulRedisClusterConnection` or connection pools.
 4. **Local cache for hot users** — Zipfian traffic means 20% of users get 80% of requests. Cache their segments locally. Eliminates Redis call for majority of traffic.
 
-These are Phase 15+ optimizations. The architecture supports all of them — interfaces (UserSegmentRepository, FrequencyCapper) make the swap transparent.
+These are future optimizations. The architecture supports all of them — interfaces (UserSegmentRepository, FrequencyCapper) make the swap transparent.
 
 ### ZGC Performance
 
@@ -259,13 +261,13 @@ ZGC logs every pause to `results/gc.log`. Each GC cycle has 3 pause events: Mark
 
 ```bash
 # Find top 5 longest GC pauses
-grep "Pause" results/gc.log | awk '{print $NF}' | sort -t. -k1,1n -k2,2n | tail -5
+grep "Pause" results/gc.log | awk '{gsub(/ms$/, "", $NF); print $NF}' | sort -n | tail -5
 
 # Count total GC cycles
 grep -c "Pause Mark Start" results/gc.log
 
 # See all pause durations (should ALL be sub-1ms with ZGC)
-grep "Pause" results/gc.log | awk '{print $NF}' | sort -t. -k1,1n -k2,2n
+grep "Pause" results/gc.log | awk '{gsub(/ms$/, "", $NF); print $NF}' | sort -n
 
 # Check heap usage at end of test
 grep -A5 "Heap Statistics" results/gc.log | tail -10
@@ -304,7 +306,7 @@ curl -s http://localhost:8080/metrics | grep bid_errors
 | Metric | Our result | Production target | Gap |
 |--------|-----------|-------------------|-----|
 | p99 latency at baseline | 20ms | <10ms | Async Redis would close this |
-| Saturation point | ~120 RPS | 50K+ RPS | Async Redis + pipelining + multi-core |
+| Saturation point | ~120 RPS | 50K+ RPS | Async Redis + pipelining + connection pooling |
 | Error rate under load | 0% | <0.1% | Good — no crashes even past saturation |
 | ZGC max pause | 0.035ms | <1ms | Exceeds target by 28x |
 | Bid rate | 27% | 30-60% (varies) | Normal — depends on campaign inventory |

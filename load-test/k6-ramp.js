@@ -8,19 +8,20 @@ import { sendBidAndRecord } from './helpers.js';
 // At some RPS, latency starts climbing sharply — that's the saturation point.
 // Past saturation, every additional request adds queueing delay to ALL requests.
 //
-// constant-arrival-rate sends N requests/sec regardless of server speed.
-// If the server can't keep up, requests queue → latency climbs → we see the knee.
+// ramping-arrival-rate changes the target requests/sec over time according to stages.
+// If the server can't keep up as the rate ramps up, requests queue → latency climbs → we see the knee.
 //
 // Stages are calibrated for single-event-loop Vert.x with sync Redis.
 // Expected saturation: ~100-150 RPS (sync Redis is the bottleneck).
 export const options = {
+    discardResponseBodies: true,
     scenarios: {
         ramp: {
             executor: 'ramping-arrival-rate',
             startRate: 10,
             timeUnit: '1s',
-            preAllocatedVUs: 50,
-            maxVUs: 1000,
+            preAllocatedVUs: 100,
+            maxVUs: 5000,
             stages: [
                 { target: 50, duration: '20s' },     // warmup
                 { target: 50, duration: '30s' },     // hold — baseline latency

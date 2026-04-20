@@ -15,6 +15,7 @@ import { sendBidAndRecord } from './helpers.js';
 // - Recovery curve after spike ends — how fast p99 returns to baseline
 // - Whether error rate stays acceptable during the burst
 export const options = {
+    discardResponseBodies: true,
     scenarios: {
         spike: {
             executor: 'ramping-arrival-rate',

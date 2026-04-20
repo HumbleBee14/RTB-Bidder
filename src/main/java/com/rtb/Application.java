@@ -6,6 +6,9 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.rtb.config.AppConfig;
 import com.rtb.config.PipelineConfig;
 import com.rtb.config.RedisConfig;
+import com.rtb.event.EventPublisher;
+import com.rtb.event.KafkaEventPublisher;
+import com.rtb.event.NoOpEventPublisher;
 import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
 import com.rtb.frequency.RedisFrequencyCapper;
@@ -94,10 +97,16 @@ public final class Application {
         );
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);
 
+        // Event publishing
+        EventPublisher eventPublisher = createEventPublisher(config);
+        if (eventPublisher instanceof AutoCloseable closeablePublisher) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePublisher), "shutdown-events"));
+        }
+
         // Handlers
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, frequencyCapper);
-        WinHandler winHandler = new WinHandler(objectMapper);
-        TrackingHandler trackingHandler = new TrackingHandler();
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, frequencyCapper, eventPublisher);
+        WinHandler winHandler = new WinHandler(objectMapper, eventPublisher);
+        TrackingHandler trackingHandler = new TrackingHandler(eventPublisher);
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize);
 
         // Start
@@ -151,6 +160,18 @@ public final class Application {
 
         logger.info("Scorer initialized: {}", scorer.name());
         return scorer;
+    }
+
+    private static EventPublisher createEventPublisher(AppConfig config) {
+        String type = config.get("events.type", "noop");
+        logger.info("Event publisher: {}", type);
+        return switch (type) {
+            case "kafka" -> new KafkaEventPublisher(config);
+            default -> {
+                logger.info("Using NoOp event publisher (events logged at DEBUG level)");
+                yield new NoOpEventPublisher();
+            }
+        };
     }
 
     private static BudgetPacer createBudgetPacer(AppConfig config, RedisConfig redisConfig,

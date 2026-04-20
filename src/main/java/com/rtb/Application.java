@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.rtb.config.AppConfig;
 import com.rtb.config.PipelineConfig;
+import com.rtb.config.PostgresConfig;
 import com.rtb.config.RedisConfig;
 import com.rtb.resilience.CircuitBreaker;
 import com.rtb.resilience.ResilientRedis;
@@ -41,6 +42,8 @@ import com.rtb.scoring.Scorer;
 import com.rtb.pipeline.stages.UserEnrichmentStage;
 import com.rtb.repository.CachedCampaignRepository;
 import com.rtb.repository.CampaignRepository;
+import com.rtb.repository.JsonCampaignRepository;
+import com.rtb.repository.PostgresCampaignRepository;
 import com.rtb.repository.RedisUserSegmentRepository;
 import com.rtb.server.BidRequestHandler;
 import com.rtb.server.BidRouter;
@@ -77,7 +80,7 @@ public final class Application {
         RedisUserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(redisConfig);
         Runtime.getRuntime().addShutdownHook(new Thread(userSegmentRepo::close, "shutdown-redis"));
 
-        CampaignRepository campaignRepo = new CachedCampaignRepository(objectMapper, "campaigns.json");
+        CampaignRepository campaignRepo = createCampaignRepository(config, objectMapper);
 
         TargetingEngine targetingEngine = createTargetingEngine(config);
         Scorer scorer = createScorer(config);
@@ -169,6 +172,25 @@ public final class Application {
         } catch (Exception e) {
             logger.warn("Failed to close resource: {}", e.getMessage());
         }
+    }
+
+    private static CampaignRepository createCampaignRepository(AppConfig config, ObjectMapper objectMapper) {
+        String type = config.get("campaigns.source", "json");
+        logger.info("Campaign source: {}", type);
+
+        CampaignRepository source = switch (type) {
+            case "postgres" -> {
+                PostgresConfig pgConfig = PostgresConfig.from(config);
+                logger.info("Using PostgreSQL campaign repository");
+                yield new PostgresCampaignRepository(pgConfig);
+            }
+            default -> {
+                logger.info("Using JSON file campaign repository (default)");
+                yield new JsonCampaignRepository(objectMapper, "campaigns.json");
+            }
+        };
+
+        return new CachedCampaignRepository(source);
     }
 
     private static Scorer createScorer(AppConfig config) {

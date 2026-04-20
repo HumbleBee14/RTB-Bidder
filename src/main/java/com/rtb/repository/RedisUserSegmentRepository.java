@@ -33,6 +33,10 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
         logger.info("Connected to Redis: {}:{}", uri.getHost(), uri.getPort());
     }
 
+    public StatefulRedisConnection<String, String> getConnection() {
+        return connection;
+    }
+
     @Override
     public Set<String> getSegments(String userId) {
         String key = "user:" + userId + ":segments";

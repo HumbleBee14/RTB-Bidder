@@ -1,5 +1,8 @@
 package com.rtb.server;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rtb.health.CompositeHealthCheck;
+import com.rtb.metrics.MetricsRegistry;
 import io.vertx.core.Vertx;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
@@ -7,9 +10,6 @@ import io.vertx.ext.web.handler.BodyHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Configures all HTTP routes for the RTB bidder.
- */
 public final class BidRouter {
 
     private static final Logger logger = LoggerFactory.getLogger(BidRouter.class);
@@ -18,15 +18,21 @@ public final class BidRouter {
     private final WinHandler winHandler;
     private final TrackingHandler trackingHandler;
     private final int maxBodySize;
+    private final MetricsRegistry metricsRegistry;
+    private final CompositeHealthCheck healthCheck;
+    private final ObjectMapper objectMapper;
 
-    public BidRouter(BidRequestHandler bidRequestHandler,
-                     WinHandler winHandler,
-                     TrackingHandler trackingHandler,
-                     int maxBodySize) {
+    public BidRouter(BidRequestHandler bidRequestHandler, WinHandler winHandler,
+                     TrackingHandler trackingHandler, int maxBodySize,
+                     MetricsRegistry metricsRegistry, CompositeHealthCheck healthCheck,
+                     ObjectMapper objectMapper) {
         this.bidRequestHandler = bidRequestHandler;
         this.winHandler = winHandler;
         this.trackingHandler = trackingHandler;
         this.maxBodySize = maxBodySize;
+        this.metricsRegistry = metricsRegistry;
+        this.healthCheck = healthCheck;
+        this.objectMapper = objectMapper;
     }
 
     public Router createRouter(Vertx vertx) {
@@ -38,7 +44,7 @@ public final class BidRouter {
         router.post("/win").handler(winHandler);
         router.get("/impression").handler(trackingHandler::handleImpression);
         router.get("/click").handler(trackingHandler::handleClick);
-        router.get("/health").handler(this::handleHealth);
+        router.get("/health").handler(ctx -> handleHealth(ctx, vertx));
         router.get("/metrics").handler(this::handleMetrics);
         router.get("/api-docs").handler(this::handleApiDocs);
         router.get("/docs").handler(this::handleSwaggerUi);
@@ -47,18 +53,35 @@ public final class BidRouter {
         return router;
     }
 
-    private void handleHealth(RoutingContext ctx) {
-        ctx.response()
-                .putHeader("Content-Type", "application/json")
-                .setStatusCode(200)
-                .end("{\"status\":\"UP\"}");
+    /** Health checks run on a worker thread — never blocks the event loop. */
+    private void handleHealth(RoutingContext ctx, Vertx vertx) {
+        vertx.executeBlocking(() -> {
+            return healthCheck.check();
+        }).onSuccess(result -> {
+            try {
+                boolean healthy = "UP".equals(result.get("status"));
+                String json = objectMapper.writeValueAsString(result);
+                ctx.response()
+                        .putHeader("Content-Type", "application/json")
+                        .setStatusCode(healthy ? 200 : 503)
+                        .end(json);
+            } catch (Exception e) {
+                ctx.response().setStatusCode(503)
+                        .putHeader("Content-Type", "application/json")
+                        .end("{\"status\":\"DOWN\"}");
+            }
+        }).onFailure(err -> {
+            ctx.response().setStatusCode(503)
+                    .putHeader("Content-Type", "application/json")
+                    .end("{\"status\":\"DOWN\"}");
+        });
     }
 
     private void handleMetrics(RoutingContext ctx) {
         ctx.response()
-                .putHeader("Content-Type", "text/plain; charset=utf-8")
+                .putHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
                 .setStatusCode(200)
-                .end("# Metrics not yet configured\n");
+                .end(metricsRegistry.scrape());
     }
 
     private void handleApiDocs(RoutingContext ctx) {

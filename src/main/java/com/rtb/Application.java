@@ -6,6 +6,11 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.rtb.config.AppConfig;
 import com.rtb.config.PipelineConfig;
 import com.rtb.config.RedisConfig;
+import com.rtb.health.CompositeHealthCheck;
+import com.rtb.health.KafkaHealthCheck;
+import com.rtb.health.RedisHealthCheck;
+import com.rtb.metrics.BidMetrics;
+import com.rtb.metrics.MetricsRegistry;
 import com.rtb.event.EventPublisher;
 import com.rtb.event.KafkaEventPublisher;
 import com.rtb.event.NoOpEventPublisher;
@@ -95,7 +100,19 @@ public final class Application {
                 new BudgetPacingStage(budgetPacer),
                 new ResponseBuildStage(baseUrl)
         );
-        BidPipeline pipeline = new BidPipeline(stages, pipelineConfig);
+        // Metrics + health
+        MetricsRegistry metricsRegistry = new MetricsRegistry();
+        BidMetrics bidMetrics = new BidMetrics(metricsRegistry.registry());
+
+        BidPipeline pipeline = new BidPipeline(stages, pipelineConfig, bidMetrics);
+
+        KafkaHealthCheck kafkaHealthCheck = new KafkaHealthCheck(config);
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(kafkaHealthCheck), "shutdown-kafka-health"));
+
+        CompositeHealthCheck healthCheck = new CompositeHealthCheck(List.of(
+                new RedisHealthCheck(userSegmentRepo.getConnection()),
+                kafkaHealthCheck
+        ));
 
         // Event publishing
         EventPublisher eventPublisher = createEventPublisher(config);
@@ -104,10 +121,11 @@ public final class Application {
         }
 
         // Handlers
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, frequencyCapper, eventPublisher);
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(objectMapper, pipeline, frequencyCapper, eventPublisher, bidMetrics);
         WinHandler winHandler = new WinHandler(objectMapper, eventPublisher);
         TrackingHandler trackingHandler = new TrackingHandler(eventPublisher);
-        BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize);
+        BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize,
+                metricsRegistry, healthCheck, objectMapper);
 
         // Start
         Vertx vertx = Vertx.vertx(new VertxOptions());

@@ -110,11 +110,12 @@ One circuit breaker protects both segment lookup AND frequency capping — they 
 ### ResilientEventPublisher wraps any EventPublisher
 
 ```java
-EventPublisher raw = new KafkaEventPublisher(config);     // or NoOpEventPublisher
-EventPublisher resilient = new ResilientEventPublisher(raw, 5, 10000);
+CircuitBreaker kafkaCB = new CircuitBreaker("kafka-events", 5, 30000);
+EventPublisher raw = new KafkaEventPublisher(config, kafkaCB::recordExternalFailure);
+EventPublisher resilient = new ResilientEventPublisher(raw, kafkaCB);
 ```
 
-Works with both Kafka and NoOp — the circuit breaker wraps the interface, not the implementation.
+The circuit breaker is created first so Kafka's async callback can report failures to it. `ResilientEventPublisher` wraps the interface, not the implementation.
 
 ### Why sliding window, not consecutive failure count
 

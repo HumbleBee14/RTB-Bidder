@@ -46,6 +46,9 @@ public final class CircuitBreaker {
         if (cooldownMs < 100) {
             throw new IllegalArgumentException("cooldownMs must be >= 100, got: " + cooldownMs);
         }
+        if (windowMs < 1000) {
+            throw new IllegalArgumentException("windowMs must be >= 1000, got: " + windowMs);
+        }
         this.name = name;
         this.failureThreshold = failureThreshold;
         this.cooldownMs = cooldownMs;
@@ -118,8 +121,9 @@ public final class CircuitBreaker {
             state.set(State.CLOSED);
             resetWindow();
             logger.info("Circuit breaker [{}]: HALF_OPEN → CLOSED (recovered)", name);
+        } else if (isWindowExpired()) {
+            resetWindow();  // Expire stale failure count so metrics stay accurate
         }
-        // CLOSED: success does NOT reset failure count — failures expire when window rolls over
     }
 
     private void onFailure(Exception e) {

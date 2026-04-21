@@ -78,17 +78,17 @@ User opens webpage
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                           RTB BIDDER  (port 8080)                               │
-│                                                                                  │
+│                                                                                 │
 │   ┌────────────┐    ┌─────────────────────────────────────────────────────┐     │
 │   │  Vert.x    │    │               BID PIPELINE (8 stages)               │     │
 │   │  HTTP      │───►│  Validate → Enrich → Filter → FreqCap → Score →     │     │
 │   │  Server    │    │  Rank → PacingCheck → BuildResponse                 │     │
-│   │ (Netty)    │◄───│                                                      │     │
-│   └────────────┘    └──────────────────────┬──────────────────────────────┘     │
-│                                            │                                     │
-│   ┌────────────────────────────────────────┼──────────────────────────────┐     │
-│   │                          SERVICES      │                               │     │
-│   │                                        │                               │     │
+│   │ (Netty)    │◄───│                                                     │     │
+│   └────────────┘    └─────────────────────┬───────────────────────────────┘     │
+│                                           │                                     │
+│   ┌───────────────────────────────────────┼───────────────────────────────┐     │
+│   │                          SERVICES     │                               │     │
+│   │                                       │                               │     │
 │   │  ┌──────────────┐  ┌───────────────┐  │  ┌──────────────────────────┐ │     │
 │   │  │  Targeting   │  │   Scoring     │  │  │     Budget Pacing        │ │     │
 │   │  │  Engine      │  │   Engine      │  │  │  (local/distributed/     │ │     │
@@ -96,28 +96,28 @@ User opens webpage
 │   │  │  embedding/  │  │  abtest/      │  │  └──────────────────────────┘ │     │
 │   │  │  hybrid)     │  │  cascade)     │  │                               │     │
 │   │  └──────────────┘  └───────────────┘  │  ┌──────────────────────────┐ │     │
-│   │                                        │  │   Frequency Capper       │ │     │
+│   │                                       │  │   Frequency Capper       │ │     │
 │   │  ┌──────────────┐  ┌───────────────┐  │  │   (Redis INCR)           │ │     │
 │   │  │  Campaign    │  │  User Segment │  │  └──────────────────────────┘ │     │
 │   │  │  Repository  │  │  Repository   │  │                               │     │
 │   │  │ (JSON/PG +   │  │  (Redis)      │  │  ┌──────────────────────────┐ │     │
 │   │  │  LRU cache)  │  └───────────────┘  │  │   Circuit Breakers       │ │     │
 │   │  └──────────────┘                     │  │  (Redis + Kafka)         │ │     │
-│   └───────────────────────────────────────┼──┴──────────────────────────┘ │     │
+│   └───────────────────────────────────────┼──┴──────────────────────────┘─┘     │
 │                                           │                                     │
 └───────────────────────────────────────────┼─────────────────────────────────────┘
                                             │
     ┌───────────────────────────────────────▼─────────────────────────────────────┐
-    │                         EXTERNAL INFRASTRUCTURE                              │
-    │                                                                              │
-    │  ┌──────────┐  ┌──────────┐  ┌────────────┐  ┌──────────┐  ┌───────────┐  │
-    │  │  Redis   │  │  Kafka   │  │ PostgreSQL  │  │ClickHouse│  │Prometheus │  │
-    │  │          │  │          │  │             │  │          │  │+ Grafana  │  │
-    │  │ Segments │  │ Events   │  │  Campaigns  │  │Analytics │  │ Dashboards│  │
-    │  │ FreqCaps │  │ (async)  │  │  (startup   │  │ OLAP     │  │           │  │
-    │  │ Budgets  │  │          │  │   cached)   │  │          │  │           │  │
-    │  └──────────┘  └──────────┘  └────────────┘  └──────────┘  └───────────┘  │
-    └──────────────────────────────────────────────────────────────────────────────┘
+    │                         EXTERNAL INFRASTRUCTURE                             │
+    │                                                                             │
+    │  ┌──────────┐  ┌──────────┐  ┌─────────────┐  ┌──────────┐  ┌───────────┐   │
+    │  │  Redis   │  │  Kafka   │  │ PostgreSQL  │  │ClickHouse│  │Prometheus │   │
+    │  │          │  │          │  │             │  │          │  │+ Grafana  │   │
+    │  │ Segments │  │ Events   │  │  Campaigns  │  │Analytics │  │ Dashboards│   │
+    │  │ FreqCaps │  │ (async)  │  │  (startup   │  │ OLAP     │  │           │   │
+    │  │ Budgets  │  │          │  │   cached)   │  │          │  │           │   │
+    │  └──────────┘  └──────────┘  └─────────────┘  └──────────┘  └───────────┘   │
+    └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -159,23 +159,23 @@ docker compose up -d
 POST /bid  (JSON body: BidRequest)
     │
     ▼
-┌───────────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────────┐
 │  Vert.x HTTP Server (non-blocking, Netty event loop)                 │
-│  BidRequestHandler.handle()                                           │
+│  BidRequestHandler.handle()                                          │
 │  • Reads body bytes (max 65KB)                                       │
-│  • Calls BidRequestCodec.decode() → BidRequest POJO                 │
+│  • Calls BidRequestCodec.decode() → BidRequest POJO                  │
 │  • Creates BidContext from pool (zero allocation!)                   │
 │  • Submits to BidPipeline.process()                                  │
-└────────────────────────────┬──────────────────────────────────────────┘
+└────────────────────────────┬─────────────────────────────────────────┘
                              │  BidContext (mutable, pooled object)
                              ▼
 ┌───────────────────────────────────────────────────────────────────────┐
 │  BidPipeline.process()                                                │
 │  • Records start timestamp                                            │
-│  • Iterates 8 stages in order                                        │
-│  • After EACH stage: checks deadline (System.nanoTime() - start)    │
-│  • If deadline exceeded: throws PipelineException(TIMEOUT)           │
-│  • If stage returns SKIP: skips remaining (no-bid fast path)         │
+│  • Iterates 8 stages in order                                         │
+│  • After EACH stage: checks deadline (System.nanoTime() - start)      │
+│  • If deadline exceeded: throws PipelineException(TIMEOUT)            │
+│  • If stage returns SKIP: skips remaining (no-bid fast path)          │
 └────────────────────────────┬──────────────────────────────────────────┘
                              │
         ┌────────────────────┼──────────────────────────────────┐
@@ -214,10 +214,10 @@ POST /bid  (JSON body: BidRequest)
                              ▼
 ┌───────────────────────────────────────────────────────────────────────┐
 │  BidRequestHandler (back in HTTP handler)                             │
-│  • Publishes BidEvent to Kafka (async, after response sent)          │
-│  • Records metrics: bid_requests_total, bid_latency_seconds          │
-│  • Writes HTTP 200 with BidResponse JSON                             │
-│  • Returns BidContext to pool (zero-allocation cleanup)              │
+│  • Publishes BidEvent to Kafka (async, after response sent)           │
+│  • Records metrics: bid_requests_total, bid_latency_seconds           │
+│  • Writes HTTP 200 with BidResponse JSON                              │
+│  • Returns BidContext to pool (zero-allocation cleanup)               │
 └───────────────────────────────────────────────────────────────────────┘
     │
     ▼
@@ -1050,35 +1050,35 @@ KPIs computed from these events:
 
 ```
                 ┌─────────────────────────────────┐
-                │                                  │
-                │          CLOSED                  │
-                │     (normal operation)           │
-                │   all Redis/Kafka calls pass     │
-                │                                  │
+                │                                 │
+                │          CLOSED                 │
+                │     (normal operation)          │
+                │   all Redis/Kafka calls pass    │
+                │                                 │
                 └─────────────────┬───────────────┘
                                   │
                     5 consecutive failures
                                   │
                                   ▼
                 ┌─────────────────────────────────┐
-                │                                  │
-                │           OPEN                   │
-                │      (circuit tripped)           │
-                │   all calls short-circuit        │
-                │   immediately (return default)   │
-                │                                  │
+                │                                 │
+                │           OPEN                  │
+                │      (circuit tripped)          │
+                │   all calls short-circuit       │
+                │   immediately (return default)  │
+                │                                 │
                 └─────────────────┬───────────────┘
                                   │
                     cooldown elapsed (10s/30s)
                                   │
                                   ▼
-                ┌─────────────────────────────────┐
+                ┌──────────────────────────────────┐
                 │                                  │
                 │         HALF-OPEN                │
                 │       (probe state)              │
                 │   allow 1 real call through      │
                 │                                  │
-                └────────┬──────────────┬─────────┘
+                └────────┬──────────────┬──────────┘
                          │              │
                     success           failure
                          │              │

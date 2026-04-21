@@ -59,6 +59,27 @@
         </then>
     </if>
 
+    <!--
+        Logback 1.5 does not allow <if> inside <root>/<logger>/<appender>.
+        Workaround: always define all three appenders — disabled ones become NOPAppender
+        so <root> can reference all three unconditionally without any warnings.
+    -->
+    <if condition='!property("CONSOLE_ENABLED").equals("true")'>
+        <then>
+            <appender name="CONSOLE" class="ch.qos.logback.core.helpers.NOPAppender"/>
+        </then>
+    </if>
+    <if condition='!property("FILE_ENABLED").equals("true")'>
+        <then>
+            <appender name="FILE" class="ch.qos.logback.core.helpers.NOPAppender"/>
+        </then>
+    </if>
+    <if condition='!property("JSON_ENABLED").equals("true")'>
+        <then>
+            <appender name="JSON_FILE" class="ch.qos.logback.core.helpers.NOPAppender"/>
+        </then>
+    </if>
+
     <!-- ── Log levels — override with -Drtb.log.level=WARN for load tests ── -->
     <variable name="RTB_LOG_LEVEL" value="${rtb.log.level:-INFO}"/>
     <logger name="com.rtb" level="${RTB_LOG_LEVEL}"/>
@@ -66,14 +87,8 @@
     <logger name="io.netty" level="WARN"/>
 
     <root level="WARN">
-        <if condition='property("CONSOLE_ENABLED").equals("true")'><then>
-            <appender-ref ref="CONSOLE"/>
-        </then></if>
-        <if condition='property("FILE_ENABLED").equals("true")'><then>
-            <appender-ref ref="FILE"/>
-        </then></if>
-        <if condition='property("JSON_ENABLED").equals("true")'><then>
-            <appender-ref ref="JSON_FILE"/>
-        </then></if>
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+        <appender-ref ref="JSON_FILE"/>
     </root>
 </configuration>

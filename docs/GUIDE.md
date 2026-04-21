@@ -111,13 +111,17 @@ ls
 
 First build downloads dependencies (~1 minute). Later builds are cached and take ~15 seconds.
 
-**macOS / Linux:**
+**Quick (Makefile):**
 ```bash
-./mvnw package -q -DskipTests
+make build
 ```
 
-**Windows (cmd / Git Bash):**
+**Raw:**
 ```bash
+# macOS / Linux
+./mvnw package -q -DskipTests
+
+# Windows (cmd / Git Bash)
 ./mvnw.cmd package -q -DskipTests
 ```
 
@@ -133,32 +137,93 @@ ls target/rtb-bidder-1.0.0.jar
 
 The absolute minimum to see the app respond to a bid request.
 
+## Make command reference
+
+All common tasks in one place. Run `make help` to see this at any time.
+
+| # | Command | What it does |
+|---|---|---|
+| 1 | `make setup` | **First-time only** — start all Docker services + seed Redis |
+| 2 | `make build` | Build the fat JAR |
+| 2 | `make rebuild` | Clean + full rebuild |
+| 3 | `make run-jar` | Run existing JAR (fastest, no rebuild) |
+| 3 | `make run` | Build + run (default: JSON campaigns, NoOp events) |
+| 3 | `make run-prod` | Build + run with Postgres + Kafka |
+| 3 | `make run-load` | Build + run optimised for load testing |
+| 4 | `make infra-up` | Start all 6 Docker services |
+| 4 | `make infra-up-minimal` | Start Redis only |
+| 4 | `make infra-start` | Resume stopped containers (data intact) |
+| 4 | `make infra-stop` | Pause containers (data kept) |
+| 4 | `make infra-down` | Remove containers (data volumes kept) |
+| 4 | `make infra-reset` | ⚠ Wipe containers + volumes (re-seed needed) |
+| 4 | `make infra-status` | Show container status |
+| 5 | `make seed-redis` | Seed Redis with 10K test users |
+| 6 | `make health` | Check bidder health endpoint |
+| 6 | `make bid` | Fire a sample bid request |
+| 6 | `make test` | Run unit tests |
+| 7 | `make load-test-baseline` | k6 — 100 RPS constant for 2 min |
+| 7 | `make load-test-ramp` | k6 — 50 → 1000 RPS over 4 min |
+| 7 | `make load-test-spike` | k6 — sudden burst to 500 RPS |
+| 8 | `make logs` | Tail plain-text log live |
+| 8 | `make logs-json` | Tail structured JSON log live |
+
+---
+
+**One-command setup (Makefile):**
+```bash
+make setup    # starts Docker + seeds Redis
+make run-jar  # runs the bidder (in a second terminal)
+make bid      # fires a test bid (in a third terminal)
+```
+
+Or step by step:
+
 **Step 1 — Start Redis** (the only core dependency):
 ```bash
-docker compose up -d redis
+# Quick
+make infra-up-minimal
+
+# Raw
+docker-compose up -d redis
 ```
 
 **Step 2 — Seed Redis with test users:**
 ```bash
-bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli --pipe
+# Quick
+make seed-redis
+
+# Raw
+bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli
 ```
 
 **Step 3 — Start the bidder:**
 ```bash
-java -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
+# Quick (all JVM flags included)
+make run-jar
+
+# Raw
+java \
+  --sun-misc-unsafe-memory-access=allow \
+  --enable-native-access=ALL-UNNAMED \
+  -XX:+UseZGC \
+  -jar target/rtb-bidder-1.0.0.jar
 ```
 
 Leave this terminal running. Open a new terminal for the next step.
 
 **Step 4 — Send a bid request:**
 ```bash
-curl -X POST http://localhost:8080/bid \
+# Quick
+make bid
+
+# Raw
+curl -s -X POST http://localhost:8080/bid \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"user_00001","app":{"id":"a1","category":"sports","bundle":"com.s"},"device":{"type":"mobile","os":"android","geo":"US"},"ad_slots":[{"id":"s1","sizes":["300x250"],"bid_floor":0.10}]}'
+  -d '{"user_id":"user_00001","app":{"id":"a1","category":"sports","bundle":"com.sports.app"},"device":{"type":"mobile","os":"android","geo":"US"},"ad_slots":[{"id":"slot-1","sizes":["300x250"],"bid_floor":0.10}]}' | jq .
 ```
 
 **What you should see:**
-- HTTP 200 + JSON with a `bids` array → a matched bid
+- HTTP 200 + JSON with a bid → a matched campaign
 - HTTP 204 + `X-NoBid-Reason` header → no campaign matched this user
 
 Either outcome means the app is working. You're done with the quick start.
@@ -181,7 +246,7 @@ Either outcome means the app is working. You're done with the quick start.
 ## C.2 Start everything
 
 ```bash
-docker compose up -d
+docker-compose up -d
 ```
 
 **Verify all 6 containers are running:**
@@ -194,19 +259,19 @@ docker ps
 
 ```bash
 # Just Redis (minimal — for basic bidder testing)
-docker compose up -d redis
+docker-compose up -d redis
 
 # Redis + Kafka (for event publishing)
-docker compose up -d redis kafka
+docker-compose up -d redis kafka
 
 # Redis + Postgres (for production-style campaign loading)
-docker compose up -d redis postgres
+docker-compose up -d redis postgres
 
 # Everything for analytics
-docker compose up -d redis kafka postgres clickhouse
+docker-compose up -d redis kafka postgres clickhouse
 
 # Just monitoring (Prometheus + Grafana)
-docker compose up -d prometheus grafana
+docker-compose up -d prometheus grafana
 ```
 
 ## C.4 Verify each service
@@ -275,6 +340,7 @@ java \
   -XX:+ZGenerational \
   -Xms512m -Xmx512m \
   -XX:+AlwaysPreTouch \
+  --sun-misc-unsafe-memory-access=allow \
   -Xlog:gc*:file=results/gc.log:time,uptime,level,tags \
   -jar target/rtb-bidder-1.0.0.jar
 ```
@@ -333,7 +399,7 @@ Without user segments, the targeting engine can't match any campaigns, so every 
 
 **Seed:**
 ```bash
-bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli --pipe
+bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli
 ```
 
 **Verify:**
@@ -359,7 +425,7 @@ No setup needed — the JSON file is on the classpath.
 
 ```bash
 # Start Postgres (init script runs automatically on first container start)
-docker compose up -d postgres
+docker-compose up -d postgres
 
 # Verify seeded
 docker exec $(docker ps -qf name=postgres) psql -U rtb -c "SELECT id, advertiser, budget FROM campaigns"
@@ -594,7 +660,7 @@ CAMPAIGNS_SOURCE=json java -jar target/rtb-bidder-1.0.0.jar
 CAMPAIGNS_SOURCE=postgres java -jar target/rtb-bidder-1.0.0.jar
 ```
 
-Requires: `docker compose up -d postgres`.
+Requires: `docker-compose up -d postgres`.
 
 ## G.2 Events: NoOp vs Kafka
 
@@ -608,7 +674,7 @@ EVENTS_TYPE=noop java -jar target/rtb-bidder-1.0.0.jar
 EVENTS_TYPE=kafka java -jar target/rtb-bidder-1.0.0.jar
 ```
 
-Requires: `docker compose up -d kafka`.
+Requires: `docker-compose up -d kafka`.
 
 ## G.3 Targeting: segment, embedding, hybrid
 
@@ -755,7 +821,7 @@ curl -s http://localhost:8080/metrics | grep -E "^(bid_|pipeline_|jvm_|circuit_|
 
 Start Prometheus if you haven't:
 ```bash
-docker compose up -d prometheus
+docker-compose up -d prometheus
 ```
 
 Open in browser: **http://localhost:9090**
@@ -806,7 +872,7 @@ rate(jvm_gc_pause_seconds_sum[1m])
 
 **Step 1 — Start Prometheus + Grafana:**
 ```bash
-docker compose up -d prometheus grafana
+docker-compose up -d prometheus grafana
 ```
 
 **Step 2 — Open in browser:** http://localhost:3000
@@ -889,7 +955,7 @@ Requires `EVENTS_TYPE=kafka` so events actually flow to ClickHouse.
 
 ```bash
 # Start Kafka + ClickHouse
-docker compose up -d kafka clickhouse
+docker-compose up -d kafka clickhouse
 
 # Start bidder with Kafka events
 EVENTS_TYPE=kafka java -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
@@ -968,14 +1034,15 @@ GROUP BY no_bid_reason ORDER BY cnt DESC;
 
 **Step 1 — Start infrastructure:**
 ```bash
-docker compose up -d redis prometheus grafana
-bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli --pipe
+docker-compose up -d redis prometheus grafana
+bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli
 ```
 
 **Step 2 — Start bidder in load-test mode** (minimal logging to avoid blocking event loop):
 ```bash
 CONSOLE_ENABLED=false JSON_ENABLED=false \
   java -XX:+UseZGC -XX:+ZGenerational -Xms512m -Xmx512m -XX:+AlwaysPreTouch \
+       --sun-misc-unsafe-memory-access=allow \
        -Xlog:gc*:file=results/gc.log:time,uptime,level,tags \
        -Drtb.log.level=WARN \
        -jar target/rtb-bidder-1.0.0.jar
@@ -1077,7 +1144,7 @@ pkill -f rtb-bidder
 
 **`Could not connect to Redis`** — Redis container not running.
 ```bash
-docker compose up -d redis
+docker-compose up -d redis
 ```
 
 **`Failed to connect to PostgreSQL` on Windows** — Known JDBC scram-sha-256 / Docker Desktop issue.
@@ -1098,7 +1165,7 @@ java -XX:+UseZGC -Xms128m -Xmx128m -jar target/rtb-bidder-1.0.0.jar
 
 Or stop heavy containers:
 ```bash
-docker compose stop kafka clickhouse
+docker-compose stop kafka clickhouse
 ```
 
 ## Every bid returns 204 (no-bid)
@@ -1163,17 +1230,35 @@ taskkill //F //IM java.exe
 pkill -f rtb-bidder
 ```
 
-**Stop Docker services:**
+**Stop/start Docker services:**
+
+Data lives in named Docker volumes (`redis-data`, `postgres-data`, etc.) — NOT inside the
+containers. So stopping or removing containers never touches your seeded data.
+
 ```bash
-# Stop containers, keep data (next start is fast)
-docker compose stop
+# Pause containers — data intact, fast restart (containers still exist)
+docker-compose stop
 
-# Stop + remove containers (keeps volumes)
-docker compose down
+# Resume paused containers (data still there, no re-seeding needed)
+docker-compose start
 
-# Nuke everything including data (next start re-seeds)
-docker compose down -v
+# Remove containers — data still intact in volumes (containers are recreated on next up)
+docker-compose down
+
+# Start fresh after down — volumes still there, everything picks up where it left off
+docker-compose up -d
+
+# ⚠️  Wipe everything including data — next start needs full re-seeding
+docker-compose down -v
 ```
+
+| Command | Containers | Volumes (data) | Re-seed needed? |
+|---|---|---|---|
+| `stop` | paused | ✓ kept | No |
+| `start` | resumed | ✓ kept | No |
+| `down` | removed | ✓ kept | No |
+| `up -d` | recreated | ✓ kept | No |
+| `down -v` | removed | ✗ wiped | Yes |
 
 **Clean rebuild:**
 ```bash
@@ -1184,7 +1269,58 @@ docker compose down -v
 
 # Part O — Full command cheat sheet
 
-### Build / compile
+## Quick commands (Makefile)
+
+If you don't want to type raw commands, use `make`. Run `make help` to see everything.
+
+```bash
+# ── 1. First-time setup ──────────────────────────────────────────────────────
+make setup              # start all Docker services + seed Redis (one command, do this first)
+
+# ── 2. Build ─────────────────────────────────────────────────────────────────
+make build              # build fat JAR (skips tests)
+make rebuild            # clean + full rebuild
+make test               # run unit tests
+
+# ── 3. Run ───────────────────────────────────────────────────────────────────
+make run-jar            # run existing JAR without rebuilding (fastest)
+make run                # build + run with default settings (JSON campaigns, NoOp events)
+make run-prod           # build + run with Postgres campaigns + Kafka events
+make run-load           # build + run optimised for load testing (minimal logging)
+
+# ── 4. Docker infra ──────────────────────────────────────────────────────────
+make infra-up           # start all 6 services (Redis, Kafka, Postgres, ClickHouse, Prometheus, Grafana)
+make infra-up-minimal   # start Redis only (minimum to run the bidder)
+make infra-start        # resume previously stopped containers (data intact)
+make infra-stop         # pause containers (data kept, fast restart)
+make infra-down         # remove containers (data volumes still kept)
+make infra-reset        # ⚠ wipe everything including data — re-seed needed after this
+make infra-status       # show running container status
+
+# ── 5. Seed ──────────────────────────────────────────────────────────────────
+make seed-redis         # seed Redis with 10K test users (run once after infra-up)
+
+# ── 6. Verify ────────────────────────────────────────────────────────────────
+make health             # curl /health — check bidder is up
+make bid                # fire a sample bid request — check pipeline works
+
+# ── 7. Load testing ──────────────────────────────────────────────────────────
+make load-test-baseline # k6 baseline — 100 RPS constant for 2 min
+make load-test-ramp     # k6 ramp — 50 → 1000 RPS over 4 min
+make load-test-spike    # k6 spike — sudden burst to 500 RPS
+
+# ── 8. Logs ──────────────────────────────────────────────────────────────────
+make logs               # tail plain-text log live
+make logs-json          # tail structured JSON log live
+```
+
+All JVM flags (`-XX:+UseZGC`, `--sun-misc-unsafe-memory-access=allow`, etc.) are defined
+once at the top of `Makefile` — change there and every target picks it up automatically.
+
+---
+
+## Raw BUILD / Compile commands
+
 ```bash
 ./mvnw package -q -DskipTests              # build fat jar
 ./mvnw clean package -DskipTests           # clean rebuild
@@ -1194,12 +1330,12 @@ docker compose down -v
 
 ### Docker
 ```bash
-docker compose up -d                       # start all services
-docker compose up -d redis kafka           # start specific services
-docker compose ps                          # list services
-docker compose logs -f <service>           # tail service logs
-docker compose stop                        # stop all, keep data
-docker compose down -v                     # stop + wipe data
+docker-compose up -d                       # start all services
+docker-compose up -d redis kafka           # start specific services
+docker-compose ps                          # list services
+docker-compose logs -f <service>           # tail service logs
+docker-compose stop                        # stop all, keep data
+docker-compose down -v                     # stop + wipe data
 ```
 
 ### Run bidder (all modes)
@@ -1210,6 +1346,7 @@ java -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
 # Production-style
 CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
   java -XX:+UseZGC -XX:+ZGenerational -Xms512m -Xmx512m -XX:+AlwaysPreTouch \
+       --sun-misc-unsafe-memory-access=allow \
        -Xlog:gc*:file=results/gc.log \
        -jar target/rtb-bidder-1.0.0.jar
 
@@ -1224,7 +1361,7 @@ java -XX:+UseZGC -Xms128m -Xmx128m -jar target/rtb-bidder-1.0.0.jar
 
 ### Seed data
 ```bash
-bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli --pipe
+bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli
 docker exec -i $(docker ps -qf name=postgres) psql -U rtb < docker/init-postgres.sql
 docker exec -i $(docker ps -qf name=clickhouse) clickhouse-client -d rtb --multiquery < docker/init-clickhouse.sql
 ```

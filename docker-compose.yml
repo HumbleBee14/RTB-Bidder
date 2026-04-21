@@ -50,6 +50,11 @@ services:
       - ./docker/init-clickhouse.sql:/docker-entrypoint-initdb.d/init.sql
     depends_on:
       - kafka
+    # Suppresses harmless "get_mempolicy: Operation not permitted" on macOS Docker.
+    # ClickHouse probes NUMA memory policies which the macOS hypervisor does not expose.
+    # unconfined seccomp allows all syscalls — acceptable for local dev, not for prod.
+    security_opt:
+      - seccomp:unconfined
 
   prometheus:
     image: prom/prometheus:v2.53.0

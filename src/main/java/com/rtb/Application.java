@@ -68,6 +68,43 @@ public final class Application {
     private static final Logger logger = LoggerFactory.getLogger(Application.class);
 
     public static void main(String[] args) {
+        try {
+            start(args);
+        } catch (Exception e) {
+            // Full stack trace goes to log file — terminal only sees the clean message
+            logger.error("Startup failed", e);
+            System.err.println();
+            System.err.println("ERROR: " + friendlyStartupError(e));
+            System.err.println("       Full stack trace written to logs/rtb-bidder.log");
+            System.err.println();
+            System.exit(1);
+        }
+    }
+
+    private static String friendlyStartupError(Throwable e) {
+        String msg = e.getMessage() != null ? e.getMessage() : "";
+        Throwable cause = e.getCause();
+        String causeMsg = cause != null && cause.getMessage() != null ? cause.getMessage() : "";
+
+        if (msg.contains("Unable to connect") || causeMsg.contains("Connection refused")) {
+            return "Cannot connect to Redis. Is Docker running? → docker-compose up -d";
+        }
+        if (msg.contains("kafka") || causeMsg.contains("kafka")) {
+            return "Cannot connect to Kafka. Start it with → docker-compose up -d kafka";
+        }
+        if (msg.contains("campaigns") || msg.contains("Campaign file not found")) {
+            return "Campaign file not found. Check campaigns.json exists in src/main/resources/";
+        }
+        if (msg.contains("address already in use") || causeMsg.contains("address already in use")) {
+            return "Port 8080 is already in use. Kill the existing process or change server.port";
+        }
+        if (msg.contains("model") || msg.contains(".onnx")) {
+            return "ML model file not found. Check SCORING_MODEL_PATH points to a valid .onnx file";
+        }
+        return e.getClass().getSimpleName() + ": " + (msg.isEmpty() ? causeMsg : msg);
+    }
+
+    private static void start(String[] args) {
         AppConfig config = AppConfig.load();
         int port = config.getInt("server.port", 8080);
         int maxBodySize = config.getInt("server.body.maxSize", 65536);
@@ -160,10 +197,15 @@ public final class Application {
                 .onSuccess(server -> logger.info("RTB Bidder started on port {} | SLA: {}ms | stages: {}",
                         server.actualPort(), pipelineConfig.maxLatencyMs(), stages.size()))
                 .onFailure(err -> {
-                    logger.error("Failed to start RTB Bidder", err);
+                    logger.error("Failed to start HTTP server", err);
+                    System.err.println();
+                    System.err.println("ERROR: " + friendlyStartupError(err));
+                    System.err.println("       Full stack trace written to logs/rtb-bidder.log");
+                    System.err.println();
                     closeQuietly(frequencyCapper);
                     closeQuietly(userSegmentRepo);
                     vertx.close();
+                    System.exit(1);
                 });
     }
 

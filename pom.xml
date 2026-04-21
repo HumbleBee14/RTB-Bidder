@@ -25,6 +25,10 @@
         <logback.version>1.5.6</logback.version>
         <janino.version>3.1.12</janino.version>
         <onnxruntime.version>1.19.2</onnxruntime.version>
+        <!-- Used only for netty-resolver-dns-native-macos — first version published to Central.
+             Core Netty (4.1.111) is still pulled transitively by Vert.x; this is a
+             runtime-only DNS resolver jar, API-compatible across 4.1.x patch versions. -->
+        <netty.macos.dns.version>4.1.112.Final</netty.macos.dns.version>
     </properties>
 
     <dependencyManagement>
@@ -117,6 +121,28 @@
             <groupId>org.codehaus.janino</groupId>
             <artifactId>janino</artifactId>
             <version>${janino.version}</version>
+        </dependency>
+
+        <!--
+            Netty native macOS DNS resolver — eliminates the startup WARN:
+            "Can not find netty-resolver-dns-native-macos in the classpath"
+            Both classifiers included so the fat JAR works on Apple Silicon (aarch64)
+            and Intel (x86_64) Macs. On Linux/Windows these JARs are present but
+            their native libs simply aren't loaded — no impact on other platforms.
+        -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver-dns-native-macos</artifactId>
+            <version>${netty.macos.dns.version}</version>
+            <classifier>osx-aarch_64</classifier>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-resolver-dns-native-macos</artifactId>
+            <version>${netty.macos.dns.version}</version>
+            <classifier>osx-x86_64</classifier>
+            <scope>runtime</scope>
         </dependency>
     </dependencies>
 

@@ -465,8 +465,8 @@ docker-compose up -d redis kafka clickhouse postgres
 docker exec -i redis redis-cli < docker/init-redis.sh
 docker exec -i postgres psql -U rtb < docker/init-postgres.sql
 
-# Build
-mvn clean package -DskipTests
+# Build (use ./mvnw on macOS/Linux or mvnw.cmd on Windows if Maven isn't installed)
+./mvnw clean package -DskipTests
 
 # Run with ZGC
 java -XX:+UseZGC -XX:+ZGenerational -Xms512m -Xmx512m --enable-preview -jar target/rtb-bidder.jar

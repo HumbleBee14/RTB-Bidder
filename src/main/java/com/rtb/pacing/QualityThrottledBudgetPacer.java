@@ -45,12 +45,15 @@ public final class QualityThrottledBudgetPacer implements BudgetPacer {
     private final LongAdder probabilisticSpendCount = new LongAdder();
 
     public QualityThrottledBudgetPacer(BudgetPacer delegate, double lowThreshold, double highThreshold) {
-        if (lowThreshold < 0) {
-            throw new IllegalArgumentException("lowThreshold must be >= 0, got: " + lowThreshold);
+        if (delegate == null) {
+            throw new IllegalArgumentException("delegate pacer must not be null");
         }
-        if (highThreshold <= lowThreshold) {
+        if (!Double.isFinite(lowThreshold) || lowThreshold < 0) {
+            throw new IllegalArgumentException("lowThreshold must be finite and >= 0, got: " + lowThreshold);
+        }
+        if (!Double.isFinite(highThreshold) || highThreshold <= lowThreshold) {
             throw new IllegalArgumentException(
-                    "highThreshold must be > lowThreshold (low=" + lowThreshold + ", high=" + highThreshold + ")");
+                    "highThreshold must be finite and > lowThreshold (low=" + lowThreshold + ", high=" + highThreshold + ")");
         }
         this.delegate = delegate;
         this.lowThreshold = lowThreshold;
@@ -68,7 +71,9 @@ public final class QualityThrottledBudgetPacer implements BudgetPacer {
     public boolean trySpend(String campaignId, double amount, double qualityScore) {
         if (qualityScore >= highThreshold) {
             highQualitySpendCount.increment();
-            return delegate.trySpend(campaignId, amount);
+            // Forward the scored overload — composable with future decorators that may use it.
+            // Pacers that don't override the scored method fall through to trySpend(id, amount) via the default.
+            return delegate.trySpend(campaignId, amount, qualityScore);
         }
 
         if (qualityScore < lowThreshold) {
@@ -80,7 +85,7 @@ public final class QualityThrottledBudgetPacer implements BudgetPacer {
         double spendProbability = (qualityScore - lowThreshold) / (highThreshold - lowThreshold);
         if (ThreadLocalRandom.current().nextDouble() < spendProbability) {
             probabilisticSpendCount.increment();
-            return delegate.trySpend(campaignId, amount);
+            return delegate.trySpend(campaignId, amount, qualityScore);
         }
 
         throttledCount.increment();

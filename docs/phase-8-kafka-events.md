@@ -303,3 +303,17 @@ https://bidder.example.com/click?bid_id=<uuid>&user_id=<id>&campaign_id=<id>&slo
 `TrackingHandler` reads all four from the request params and publishes complete events.
 
 Why query params and not a bid-cache lookup? A cache would require storing every bid_id → context mapping (Redis, ~1h TTL). At 50K RPS × 1h = 180M entries, plus an extra Redis hit on the tracking hot path. The URL-embedding approach has zero lookup cost — the exchange/browser passes the context back when it pings the URL. This is how real ad-tech does it (standard OpenRTB tracking URL pattern).
+
+`TrackingHandler` validates each ID param against an allow-list pattern (`[A-Za-z0-9._:-]{1,128}`) to block log-forging via control characters and reject oversized values that could flood logs. Invalid params → HTTP 400.
+
+## Future enhancement: signed tracking URLs (HMAC)
+
+The current URL-embedding approach trusts whatever params the exchange/browser sends back. Anyone with the URL can hit the tracking endpoint with arbitrary IDs — polluting analytics, forging clicks. For this learning project, the input-validation pattern is enough; in production, the standard hardening is HMAC-signed tracking URLs:
+
+```
+/click?bid_id=<id>&user_id=<id>&campaign_id=<id>&slot_id=<id>&sig=<HMAC-SHA256(params, shared-secret)>
+```
+
+`ResponseBuildStage` computes the signature when building the URL. `TrackingHandler` verifies the signature before publishing the event. Tamper the IDs → signature fails → request rejected.
+
+This adds ~2µs per URL build and per tracking request — negligible vs the security benefit. The `TrackingHandler` interface stays the same; only the signing/verification logic is added.

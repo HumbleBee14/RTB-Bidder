@@ -75,7 +75,13 @@ public final class ResponseBuildStage implements PipelineStage {
     }
 
     private static String urlEncode(String value) {
-        return value == null ? "" : URLEncoder.encode(value, StandardCharsets.UTF_8);
+        // Don't silently emit empty strings — RequestValidationStage guarantees userId/slotId
+        // are non-blank, and campaign IDs are non-null from the repository. A null here
+        // means a programming bug upstream; fail fast instead of hiding it in analytics.
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("Cannot build tracking URL: required ID is null or blank");
+        }
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private String findMatchingSize(Campaign campaign, BidRequest.AdSlot slot) {

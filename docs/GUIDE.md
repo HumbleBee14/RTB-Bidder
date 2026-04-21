@@ -36,7 +36,7 @@ This is the operator's manual for the RTB bidder. Every section is a self-contai
   - [G.2 Events: NoOp vs Kafka](#g2-events-noop-vs-kafka)
   - [G.3 Targeting: segment, embedding, hybrid](#g3-targeting-segment-embedding-hybrid)
   - [G.4 Scoring: feature-weighted, ML, A/B, cascade](#g4-scoring-feature-weighted-ml-ab-cascade)
-  - [G.5 Budget pacing: local, distributed, hourly](#g5-budget-pacing-local-distributed-hourly)
+  - [G.5 Budget pacing: local, distributed, hourly, quality-throttled](#g5-budget-pacing-local-distributed-hourly-quality-throttled)
 - [Part H — Logs](#part-h--logs)
   - [H.1 Where logs live](#h1-where-logs-live)
   - [H.2 Tailing logs live](#h2-tailing-logs-live)
@@ -492,6 +492,8 @@ curl -s -D - -o /dev/null -X POST http://localhost:8080/bid \
 
 Requires `EVENTS_TYPE=kafka` for events to actually publish.
 
+The tracking URLs returned in the bid response already contain `user_id`, `campaign_id`, `slot_id` as query params — that's how `TrackingHandler` publishes complete events without needing a bid-cache lookup. You can also extract those URLs directly from the bid response instead of constructing them by hand.
+
 **Step 1 — Send bid, capture bid_id:**
 ```bash
 BID_RESP=$(curl -s -X POST http://localhost:8080/bid \
@@ -629,15 +631,35 @@ SCORING_TYPE=cascade          java -jar ...   # linear filter → ML rescore
 
 ML mode requires `ml/pctr_model.onnx` and `ml/feature_schema.json`.
 
-## G.5 Budget pacing: local, distributed, hourly
+## G.5 Budget pacing: local, distributed, hourly, quality-throttled
 
+**Base pacer** (choose one):
 ```bash
 PACING_TYPE=local        java -jar ...   # default — AtomicLong, single-instance
 PACING_TYPE=distributed  java -jar ...   # Redis DECRBY, multi-instance safe
+```
 
-# Enable hourly smoothing on top of either:
+**Hourly smoothing** (optional decorator — spreads daily budget across hours):
+```bash
 PACING_HOURLY_ENABLED=true PACING_HOURLY_HOURS=24 java -jar ...
 ```
+
+**Quality throttling** (optional decorator — skips low-pCTR bids to save budget for high-value opportunities, Phase 15):
+```bash
+# Requires SCORING_TYPE=ml or cascade — thresholds assume real pCTR scores
+SCORING_TYPE=ml \
+  PACING_QUALITY_THROTTLING_ENABLED=true \
+  PACING_QUALITY_THRESHOLD_LOW=0.05 \
+  PACING_QUALITY_THRESHOLD_HIGH=0.20 \
+  java -jar ...
+```
+
+Threshold behavior:
+- score ≥ `high` → always spend (bid full)
+- score < `low` → always skip (save budget)
+- in between → probabilistic spend, linearly interpolated
+
+Decorators stack: `Local → Hourly → QualityThrottled`. Each layer has one job.
 
 ---
 

@@ -147,6 +147,12 @@ curl -s -X POST http://localhost:8080/bid -H "Content-Type: application/json" \
   -d "{\"user_id\":\"user_00042\",\"app\":{\"id\":\"app1\"},\"ad_slots\":[{\"id\":\"s1\",\"sizes\":[\"300x250\"],\"bid_floor\":0.30}]}"
 ```
 
+## Future enhancements
+
+**Replace averaged word embeddings with true sentence embeddings.** `computeContextEmbedding()` currently averages per-word vectors from a pre-computed lookup table — simpler, fast, zero-allocation. Production-grade semantic matching would run the conversation context through a real sentence-transformer model (e.g., all-MiniLM-L6-v2) via ONNX Runtime — same inference path we already use for the ML scorer in Phase 6.5.
+
+Trade-off: ~1-5 ms inference latency vs. current ~0.1 ms lookup. Worth it when context quality matters more than raw throughput (e.g., chat apps with long context windows). The `TargetingEngine` interface already abstracts this — adding an `OnnxEmbeddingTargetingEngine` would be a drop-in swap, no pipeline changes.
+
 ## References
 
 - [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) — the embedding model

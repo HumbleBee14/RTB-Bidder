@@ -39,7 +39,8 @@ public final class FeatureWeightedScorer implements Scorer {
     }
 
     private double computePacingFactor(Campaign campaign) {
-        // TODO: use actual remaining budget from BudgetPacer in Phase 7
+        // Constant — pacing is enforced as a separate pipeline stage (BudgetPacingStage),
+        // not as a scoring signal. Decorators (hourly, quality-throttling) gate at spend time.
         return 1.0;
     }
 }

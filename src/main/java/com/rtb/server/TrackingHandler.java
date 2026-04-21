@@ -11,7 +11,14 @@ import org.slf4j.LoggerFactory;
 import java.time.Instant;
 import java.util.Base64;
 
-/** Handles impression and click tracking. */
+/**
+ * Handles impression and click tracking.
+ *
+ * Tracking endpoints are public — anyone with the URL can hit them. We validate inputs
+ * (length caps, safe charset) to prevent log-forging and analytics poisoning via malformed
+ * IDs. Production hardening would add HMAC signatures on the URL params so only the exchange
+ * can produce valid tracking URLs — see phase-8 docs "Future enhancement: signed tracking URLs".
+ */
 public final class TrackingHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(TrackingHandler.class);
@@ -20,6 +27,15 @@ public final class TrackingHandler {
             Base64.getDecoder().decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7")
     );
 
+    // Length cap — our IDs are short UUIDs or short strings, never close to this.
+    // Rejecting longer values blocks log-flood / memory-exhaustion attempts via giant params.
+    private static final int MAX_ID_LENGTH = 128;
+
+    // Allow-list: alphanumeric, dash, underscore, dot, colon (UUIDs, prefixed IDs, etc).
+    // Blocks control chars (log forging via \r\n), path separators, quotes, SQL-ish chars.
+    private static final java.util.regex.Pattern ID_PATTERN =
+            java.util.regex.Pattern.compile("^[A-Za-z0-9._:-]{1,128}$");
+
     private final EventPublisher eventPublisher;
 
     public TrackingHandler(EventPublisher eventPublisher) {
@@ -27,13 +43,18 @@ public final class TrackingHandler {
     }
 
     public void handleImpression(RoutingContext ctx) {
-        String bidId = ctx.request().getParam("bid_id");
-        if (bidId == null || bidId.isBlank()) {
+        String bidId = validateId(ctx.request().getParam("bid_id"));
+        if (bidId == null) { ctx.response().setStatusCode(400).end(); return; }
+
+        String userId = validateId(ctx.request().getParam("user_id"));
+        String campaignId = validateId(ctx.request().getParam("campaign_id"));
+        String slotId = validateId(ctx.request().getParam("slot_id"));
+        if (userId == null || campaignId == null || slotId == null) {
             ctx.response().setStatusCode(400).end();
             return;
         }
 
-        logger.info("Impression: bidId={}", bidId);
+        logger.info("Impression: bidId={} campaignId={}", bidId, campaignId);
 
         ctx.response()
                 .putHeader("Content-Type", "image/gif")
@@ -41,25 +62,34 @@ public final class TrackingHandler {
                 .setStatusCode(200)
                 .end(TRACKING_PIXEL);
 
-        // TODO: look up userId, campaignId, slotId from bid cache (keyed by bidId)
-        eventPublisher.publishImpression(new ImpressionEvent(bidId, null, null, null, Instant.now()));
+        eventPublisher.publishImpression(new ImpressionEvent(bidId, userId, campaignId, slotId, Instant.now()));
     }
 
     public void handleClick(RoutingContext ctx) {
-        String bidId = ctx.request().getParam("bid_id");
-        if (bidId == null || bidId.isBlank()) {
+        String bidId = validateId(ctx.request().getParam("bid_id"));
+        if (bidId == null) { ctx.response().setStatusCode(400).end(); return; }
+
+        String userId = validateId(ctx.request().getParam("user_id"));
+        String campaignId = validateId(ctx.request().getParam("campaign_id"));
+        String slotId = validateId(ctx.request().getParam("slot_id"));
+        if (userId == null || campaignId == null || slotId == null) {
             ctx.response().setStatusCode(400).end();
             return;
         }
 
-        logger.info("Click: bidId={}", bidId);
+        logger.info("Click: bidId={} campaignId={}", bidId, campaignId);
 
         ctx.response()
                 .putHeader("Content-Type", "application/json")
                 .setStatusCode(200)
-                .end("{\"status\":\"click_tracked\",\"bid_id\":\"" + bidId.replace("\"", "\\\"") + "\"}");
+                .end("{\"status\":\"click_tracked\",\"bid_id\":\"" + bidId + "\"}");
 
-        // TODO: look up userId, campaignId, slotId from bid cache (keyed by bidId)
-        eventPublisher.publishClick(new ClickEvent(bidId, null, null, null, Instant.now()));
+        eventPublisher.publishClick(new ClickEvent(bidId, userId, campaignId, slotId, Instant.now()));
+    }
+
+    /** Returns the value if it's a safe, short ID; null otherwise. */
+    private static String validateId(String value) {
+        if (value == null || value.length() > MAX_ID_LENGTH) return null;
+        return ID_PATTERN.matcher(value).matches() ? value : null;
     }
 }

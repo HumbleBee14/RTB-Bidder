@@ -29,8 +29,11 @@ JVM_LOAD := $(JVM_PROD) -Drtb.log.level=WARN
 .PHONY: setup
 setup: infra-up				## First-time setup: start all Docker services + seed Redis
 	@echo "Waiting for Redis to be ready..."
+	@# Use docker-compose ps -q redis — resolves the service name regardless of
+	@# container naming convention. 'docker ps -qf name=redis' ALSO matches
+	@# redis-exporter, causing docker exec to receive two IDs and silently fail.
 	@attempts=0; \
-	until docker exec $$(docker ps -qf name=redis) redis-cli ping 2>/dev/null | grep -q PONG; do \
+	until docker exec $$(docker-compose ps -q redis) redis-cli ping 2>/dev/null | grep -q PONG; do \
 		attempts=$$((attempts + 1)); \
 		if [ $$attempts -ge 60 ]; then \
 			echo ""; \

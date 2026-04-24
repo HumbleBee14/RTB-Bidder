@@ -89,7 +89,9 @@ curl -s http://localhost:8080/metrics | head -5
 curl -s http://localhost:8080/metrics | grep -c "^bid_"
 ```
 - [ ] Prometheus text format (`# HELP ...`, `# TYPE ...` headers)
-- [ ] At least 20 `bid_*` metrics exposed
+- [ ] At least 10 `bid_*` metrics exposed on a cold (no-traffic) bidder
+
+> **Why not 20?** Most counters and timer percentiles are lazy — they only appear in `/metrics` after the first increment. On a fresh start with zero traffic, `grep -c "^bid_"` returns ~14 (pre-registered counters + static lines). After you fire a bid in B.4 the count jumps to 25+. Run this check again after B.4 if you want to verify the full set.
 
 ## B.3  `GET /docs` (OpenAPI spec)
 

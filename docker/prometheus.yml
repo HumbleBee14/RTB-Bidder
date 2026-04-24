@@ -11,3 +11,8 @@ scrape_configs:
       # Prometheus auto-adds instance=<host:port> — don't override it.
       # Add custom labels under a different name if needed (e.g., bidder_id).
       - targets: ['host.docker.internal:8080']
+
+  # Redis server-side metrics (memory, clients, per-command latency, evictions)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']

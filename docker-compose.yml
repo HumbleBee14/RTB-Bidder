@@ -6,6 +6,19 @@ services:
     volumes:
       - redis-data:/data
 
+  # Exposes Redis server-side metrics (memory, clients, per-command latency,
+  # evictions, keyspace hits/misses) for Prometheus on port 9121.
+  # Without this, bidder-side latency is the only Redis signal — we can't tell
+  # "Redis is slow" from "the stage code around Redis is slow".
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0-alpine
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+
   kafka:
     image: apache/kafka:3.7.0
     ports:

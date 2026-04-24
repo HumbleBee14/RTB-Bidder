@@ -398,6 +398,78 @@
         { "expr": "jvm_threads_daemon_threads", "legendFormat": "daemon" },
         { "expr": "jvm_threads_peak_threads",   "legendFormat": "peak" }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Redis (server-side)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 52 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Redis — Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 53 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "bytes" }
+      },
+      "targets": [
+        { "expr": "redis_memory_used_bytes",     "legendFormat": "used" },
+        { "expr": "redis_memory_max_bytes != 0", "legendFormat": "max" }
+      ]
+    },
+    {
+      "title": "Redis — Connected Clients",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 53 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "redis_connected_clients", "legendFormat": "clients" }
+      ]
+    },
+    {
+      "title": "Redis — Ops/sec by command",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 53 },
+      "datasource": "Prometheus",
+      "description": "Per-command rate — shows whether traffic is dominated by SMEMBERS (segments), INCR (freq cap), or DECRBY (budget)",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "rate(redis_commands_total[1m])", "legendFormat": "{{cmd}}" }
+      ]
+    },
+    {
+      "title": "Redis — Keyspace Hits vs Misses",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 61 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "rate(redis_keyspace_hits_total[1m])",   "legendFormat": "hits/sec" },
+        { "expr": "rate(redis_keyspace_misses_total[1m])", "legendFormat": "misses/sec" }
+      ]
+    },
+    {
+      "title": "Redis — Evictions & Expirations",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 61 },
+      "datasource": "Prometheus",
+      "description": "Evictions climbing means Redis is out of memory and dropping data — data loss event.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "rate(redis_evicted_keys_total[1m])", "legendFormat": "evictions/sec" },
+        { "expr": "rate(redis_expired_keys_total[1m])", "legendFormat": "expirations/sec" }
+      ]
     }
   ],
   "refresh": "10s",

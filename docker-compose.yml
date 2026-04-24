@@ -16,6 +16,7 @@ services:
       REDIS_ADDR: redis://redis:6379
     ports:
       - "9121:9121"
+    restart: unless-stopped
     depends_on:
       - redis
 
@@ -76,6 +77,7 @@ services:
       DATA_SOURCE_NAME: "postgresql://rtb:rtb@postgres:5432/rtb?sslmode=disable"
     ports:
       - "9187:9187"
+    restart: unless-stopped
     depends_on:
       - postgres
 
@@ -103,6 +105,12 @@ services:
   # containers in this compose (redis, kafka, postgres, clickhouse, prometheus,
   # grafana, and the exporters). Fills the gap between "bidder JVM metrics"
   # and "host metrics" — we see exactly what each dependency is consuming.
+  #
+  # ⚠ LOCAL DEV ONLY. This service runs with privileged: true and read-only
+  #   mounts of the host root, /sys, and the Docker socket. That is standard
+  #   for cAdvisor but is a high-privilege surface. Do NOT copy this config
+  #   to production compose files — use a restricted host-metrics collector
+  #   (node-exporter + a kubelet-integrated cAdvisor if on k8s) instead.
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     ports:

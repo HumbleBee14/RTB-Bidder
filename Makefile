@@ -113,7 +113,10 @@ infra-status:				## Show running container status
 
 .PHONY: seed-redis
 seed-redis:				## Seed Redis with 10K test users (run once after infra-up)
-	bash docker/init-redis.sh | docker exec -i $$(docker ps -qf name=redis-1) redis-cli
+	# docker-compose ps -q resolves the service name regardless of container naming
+	# convention (v1 uses _redis_1, v2 uses -redis-1). Matching via 'name=redis...'
+	# is fragile because 'redis-exporter' also contains 'redis'.
+	bash docker/init-redis.sh | docker exec -i $$(docker-compose ps -q redis) redis-cli
 
 # ── 6. Verify / test ──────────────────────────────────────────────────────────
 

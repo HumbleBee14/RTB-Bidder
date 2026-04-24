@@ -92,8 +92,15 @@ public final class BidPipeline {
         contextPool.release(ctx);
     }
 
-    /** Exposes the pool so the composition root can register saturation gauges. */
-    public BidContextPool getContextPool() {
-        return contextPool;
+    /** Contexts currently parked in the pool (for metrics gauges). */
+    public int getContextPoolAvailable() {
+        return contextPool.poolSize();
+    }
+
+    /** Cumulative count of BidContext objects ever allocated (for metrics gauges).
+     *  Must plateau after warmup — otherwise the pool is undersized and the hot
+     *  path is allocating, defeating Phase 11's zero-allocation design. */
+    public int getContextPoolTotalCreated() {
+        return contextPool.totalCreated();
     }
 }

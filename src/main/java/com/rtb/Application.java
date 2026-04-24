@@ -173,9 +173,9 @@ public final class Application {
         // If bid_context_pool_total_created keeps climbing after warmup, the pool is
         // undersized and we're allocating on the hot path (GC pressure returns).
         metricsRegistry.registry().gauge("bid_context_pool_available",
-                pipeline.getContextPool(), p -> p.poolSize());
+                pipeline, BidPipeline::getContextPoolAvailable);
         metricsRegistry.registry().gauge("bid_context_pool_total_created",
-                pipeline.getContextPool(), p -> p.totalCreated());
+                pipeline, BidPipeline::getContextPoolTotalCreated);
 
         KafkaHealthCheck kafkaHealthCheck = new KafkaHealthCheck(config);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(kafkaHealthCheck), "shutdown-kafka-health"));
@@ -197,7 +197,7 @@ public final class Application {
 
         // Handlers — use resilient wrappers
         BidRequestHandler bidRequestHandler = new BidRequestHandler(pipeline, resilientRedis, eventPublisher, bidMetrics);
-        WinHandler winHandler = new WinHandler(objectMapper, eventPublisher, bidMetrics);
+        WinHandler winHandler = new WinHandler(objectMapper, eventPublisher, bidMetrics, campaignRepo);
         TrackingHandler trackingHandler = new TrackingHandler(eventPublisher, bidMetrics);
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize,
                 metricsRegistry, healthCheck, objectMapper);

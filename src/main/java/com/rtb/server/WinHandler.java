@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rtb.event.EventPublisher;
 import com.rtb.event.events.WinEvent;
 import com.rtb.metrics.BidMetrics;
+import com.rtb.model.Campaign;
 import com.rtb.model.WinNotification;
+import com.rtb.repository.CampaignRepository;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.web.RoutingContext;
@@ -21,11 +23,29 @@ public final class WinHandler implements Handler<RoutingContext> {
     private final ObjectMapper objectMapper;
     private final EventPublisher eventPublisher;
     private final BidMetrics bidMetrics;
+    private final CampaignRepository campaignRepository;
 
-    public WinHandler(ObjectMapper objectMapper, EventPublisher eventPublisher, BidMetrics bidMetrics) {
+    public WinHandler(ObjectMapper objectMapper, EventPublisher eventPublisher,
+                      BidMetrics bidMetrics, CampaignRepository campaignRepository) {
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
         this.bidMetrics = bidMetrics;
+        this.campaignRepository = campaignRepository;
+    }
+
+    /**
+     * Campaign IDs come from external exchange input. Without validation, a
+     * malicious or misconfigured caller could send arbitrary strings and
+     * explode Prometheus cardinality via campaign_wins_total{campaign_id=...}.
+     * Linear scan is fine — /win is low QPS and the campaign list is cached
+     * in memory (typically 10-100 entries).
+     */
+    private boolean isKnownCampaign(String campaignId) {
+        if (campaignId == null || campaignId.isBlank()) return false;
+        for (Campaign c : campaignRepository.getActiveCampaigns()) {
+            if (campaignId.equals(c.id())) return true;
+        }
+        return false;
     }
 
     @Override
@@ -51,7 +71,13 @@ public final class WinHandler implements Handler<RoutingContext> {
                     notification.bidId(), notification.campaignId(),
                     notification.clearingPrice(), Instant.now()));
             bidMetrics.recordWin();
-            bidMetrics.recordCampaignWin(notification.campaignId());
+            // Only record per-campaign metric for known campaign IDs — blocks
+            // unbounded-cardinality attacks via attacker-supplied campaign_id.
+            if (isKnownCampaign(notification.campaignId())) {
+                bidMetrics.recordCampaignWin(notification.campaignId());
+            } else {
+                logger.warn("Win for unknown campaignId={} — metric dropped", notification.campaignId());
+            }
 
         } catch (Exception e) {
             logger.error("Failed to process win notification", e);

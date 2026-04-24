@@ -45,6 +45,9 @@ public final class EventLoopLagProbe {
 
     public void start() {
         long expectedNextFireAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(PROBE_INTERVAL_MS);
+        // One-element array to hold mutable state the lambda captures by reference.
+        // Safe without synchronization: vertx.setPeriodic always runs the handler
+        // on the same event-loop thread, so there is no cross-thread access.
         final long[] scheduled = { expectedNextFireAt };
         this.timerId = vertx.setPeriodic(PROBE_INTERVAL_MS, id -> {
             long now = System.nanoTime();

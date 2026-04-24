@@ -14,6 +14,7 @@ import com.rtb.health.CompositeHealthCheck;
 import com.rtb.health.KafkaHealthCheck;
 import com.rtb.health.RedisHealthCheck;
 import com.rtb.metrics.BidMetrics;
+import com.rtb.metrics.EventLoopLagProbe;
 import com.rtb.metrics.MetricsRegistry;
 import com.rtb.event.EventPublisher;
 import com.rtb.event.KafkaEventPublisher;
@@ -191,6 +192,12 @@ public final class Application {
 
         // Start
         Vertx vertx = Vertx.vertx(new VertxOptions());
+
+        // Event-loop lag probe — the canonical Vert.x health signal
+        EventLoopLagProbe lagProbe = new EventLoopLagProbe(vertx, metricsRegistry.registry());
+        lagProbe.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(lagProbe::stop, "shutdown-lag-probe"));
+
         HttpServer httpServer = new HttpServer(vertx, bidRouter, port);
 
         httpServer.start()

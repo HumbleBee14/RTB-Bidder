@@ -581,6 +581,61 @@
           "legendFormat": "cache hit ratio"
         }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Containers (cAdvisor)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 95 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Per-Container CPU",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 96 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "percentunit" }
+      },
+      "targets": [
+        { "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[1m]))", "legendFormat": "{{name}}" }
+      ]
+    },
+    {
+      "title": "Per-Container Memory (RSS)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 96 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "bytes" }
+      },
+      "targets": [
+        { "expr": "container_memory_rss{name!=\"\"}", "legendFormat": "{{name}}" }
+      ]
+    },
+    {
+      "title": "Per-Container Network RX",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 104 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "Bps" }
+      },
+      "targets": [
+        { "expr": "sum by (name) (rate(container_network_receive_bytes_total{name!=\"\"}[1m]))", "legendFormat": "{{name}}" }
+      ]
+    },
+    {
+      "title": "Per-Container Network TX",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 104 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "Bps" }
+      },
+      "targets": [
+        { "expr": "sum by (name) (rate(container_network_transmit_bytes_total{name!=\"\"}[1m]))", "legendFormat": "{{name}}" }
+      ]
     }
   ],
   "refresh": "10s",

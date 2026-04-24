@@ -95,6 +95,24 @@ services:
     security_opt:
       - seccomp:unconfined
 
+  # cAdvisor — per-container CPU / memory / network / disk IO for ALL
+  # containers in this compose (redis, kafka, postgres, clickhouse, prometheus,
+  # grafana, and the exporters). Fills the gap between "bidder JVM metrics"
+  # and "host metrics" — we see exactly what each dependency is consuming.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+
   prometheus:
     image: prom/prometheus:v2.53.0
     ports:

@@ -528,6 +528,59 @@
       "targets": [
         { "expr": "kafka_topic_partition_under_replicated_partition", "legendFormat": "{{topic}}/{{partition}}" }
       ]
+    },
+    {
+      "type": "row",
+      "title": "PostgreSQL",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 86 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "PG — Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 87 },
+      "datasource": "Prometheus",
+      "description": "Climbing = connection leak. Flat near max = pool saturation, new queries will wait.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "pg_stat_database_numbackends{datname=\"rtb\"}", "legendFormat": "active" },
+        { "expr": "pg_settings_max_connections",                    "legendFormat": "max" }
+      ]
+    },
+    {
+      "title": "PG — Transactions/sec (commits & rollbacks)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 87 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "rate(pg_stat_database_xact_commit{datname=\"rtb\"}[1m])",   "legendFormat": "commits/sec" },
+        { "expr": "rate(pg_stat_database_xact_rollback{datname=\"rtb\"}[1m])", "legendFormat": "rollbacks/sec" }
+      ]
+    },
+    {
+      "title": "PG — Cache Hit Ratio",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 87 },
+      "datasource": "Prometheus",
+      "description": "Healthy is >99%. Lower means queries hitting disk — latency spikes likely.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "yellow", "value": 0.9 }, { "color": "green", "value": 0.99 }] }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pg_stat_database_blks_hit{datname=\"rtb\"}[5m])) / (sum(rate(pg_stat_database_blks_hit{datname=\"rtb\"}[5m])) + sum(rate(pg_stat_database_blks_read{datname=\"rtb\"}[5m])))",
+          "legendFormat": "cache hit ratio"
+        }
+      ]
     }
   ],
   "refresh": "10s",

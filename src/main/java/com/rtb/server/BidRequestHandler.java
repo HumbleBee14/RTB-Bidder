@@ -101,13 +101,13 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
 
             // Extract data needed for post-response BEFORE releasing context to pool
             String userId = request.userId();
-            List<String[]> winnerIds = bidCtx.getSlotWinners().values().stream()
-                    .map(w -> new String[]{userId, w.getCampaign().id()})
+            List<Winner> winners = bidCtx.getSlotWinners().values().stream()
+                    .map(w -> new Winner(userId, w.getCampaign().id()))
                     .toList();
 
             // Per-campaign bid attribution (cardinality bounded by campaign count)
-            for (String[] ids : winnerIds) {
-                bidMetrics.recordCampaignBid(ids[1]);
+            for (Winner w : winners) {
+                bidMetrics.recordCampaignBid(w.campaignId());
             }
             List<BidEvent.SlotBidInfo> slotBids = bidCtx.getResponse().bids().stream()
                     .map(b -> new BidEvent.SlotBidInfo(b.slotId(), b.adId(), b.price()))
@@ -119,8 +119,8 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
 
             // Post-response work uses extracted data only — no context reference
             postResponseExecutor.submit(() -> {
-                for (String[] ids : winnerIds) {
-                    frequencyCapper.recordImpression(ids[0], ids[1]);
+                for (Winner w : winners) {
+                    frequencyCapper.recordImpression(w.userId(), w.campaignId());
                 }
                 eventPublisher.publishBid(BidEvent.bid(requestId, userId, slotBids, latencyMs));
             });
@@ -150,4 +150,9 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
         logger.info("No-bid: reason={}, latencyMs={}", reason, latencyMs);
         eventPublisher.publishBid(BidEvent.noBid(requestId, userId, reason.name(), latencyMs));
     }
+
+    /** Small typed carrier for (userId, campaignId) pairs extracted pre-release.
+     *  Replaces a String[2] that relied on index conventions — clearer at call sites
+     *  and impossible to swap fields by mistake. */
+    private record Winner(String userId, String campaignId) {}
 }

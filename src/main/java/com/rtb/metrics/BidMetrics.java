@@ -41,6 +41,7 @@ public final class BidMetrics {
     private final Counter winsTotal;
     private final Counter impressionsTotal;
     private final Counter clicksTotal;
+    private final Counter unknownCampaignWinsTotal;
 
     // Per-stage timer cache — avoid Timer.builder().register() per call on hot path
     private final ConcurrentHashMap<String, Timer> stageTimers = new ConcurrentHashMap<>();
@@ -102,6 +103,9 @@ public final class BidMetrics {
                 .register(registry);
         this.clicksTotal = Counter.builder("clicks_total")
                 .description("Click-throughs recorded")
+                .register(registry);
+        this.unknownCampaignWinsTotal = Counter.builder("win_unknown_campaign_total")
+                .description("Win notifications for campaign IDs not in the repository — potential cardinality/DoS probe")
                 .register(registry);
 
         // Fill rate as a gauge — THE core business metric
@@ -172,6 +176,15 @@ public final class BidMetrics {
     public void recordWin() {
         winsTotal.increment();
         totalWins.incrementAndGet();
+    }
+
+    /**
+     * Counts /win notifications with unknown campaign IDs.
+     * No campaign_id label — cardinality stays 1 regardless of attack volume.
+     * Lets ops see "this is happening and how often" without log amplification.
+     */
+    public void recordWinUnknownCampaign() {
+        unknownCampaignWinsTotal.increment();
     }
 
     public void recordCampaignBid(String campaignId) {

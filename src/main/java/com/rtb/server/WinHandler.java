@@ -59,8 +59,12 @@ public final class WinHandler implements Handler<RoutingContext> {
 
             WinNotification notification = objectMapper.readValue(body.getBytes(), WinNotification.class);
 
+            // Truncate externally-supplied IDs so attacker-padded strings can't
+            // bloat log files or downstream log pipelines.
             logger.info("Win: bidId={}, campaignId={}, clearingPrice={}",
-                    notification.bidId(), notification.campaignId(), notification.clearingPrice());
+                    truncate(notification.bidId(), 64),
+                    truncate(notification.campaignId(), 64),
+                    notification.clearingPrice());
 
             ctx.response()
                     .putHeader("Content-Type", "application/json")
@@ -76,12 +80,25 @@ public final class WinHandler implements Handler<RoutingContext> {
             if (isKnownCampaign(notification.campaignId())) {
                 bidMetrics.recordCampaignWin(notification.campaignId());
             } else {
-                logger.warn("Win for unknown campaignId={} — metric dropped", notification.campaignId());
+                // Don't log at WARN with the raw ID — an attacker flooding /win with
+                // bogus IDs could amplify our log volume. Count it (cardinality 1) and
+                // log at DEBUG with a truncated ID as defence in depth.
+                bidMetrics.recordWinUnknownCampaign();
+                if (logger.isDebugEnabled()) {
+                    logger.debug("Win for unknown campaignId={} — metric dropped",
+                            truncate(notification.campaignId(), 40));
+                }
             }
 
         } catch (Exception e) {
             logger.error("Failed to process win notification", e);
             ctx.response().setStatusCode(400).end();
         }
+    }
+
+    /** Caps log-message length so attacker-supplied strings can't bloat log files. */
+    private static String truncate(String s, int max) {
+        if (s == null) return "null";
+        return s.length() <= max ? s : s.substring(0, max) + "…(truncated)";
     }
 }

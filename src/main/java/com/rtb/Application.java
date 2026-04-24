@@ -197,8 +197,8 @@ public final class Application {
 
         // Handlers — use resilient wrappers
         BidRequestHandler bidRequestHandler = new BidRequestHandler(pipeline, resilientRedis, eventPublisher, bidMetrics);
-        WinHandler winHandler = new WinHandler(objectMapper, eventPublisher);
-        TrackingHandler trackingHandler = new TrackingHandler(eventPublisher);
+        WinHandler winHandler = new WinHandler(objectMapper, eventPublisher, bidMetrics);
+        TrackingHandler trackingHandler = new TrackingHandler(eventPublisher, bidMetrics);
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize,
                 metricsRegistry, healthCheck, objectMapper);
 

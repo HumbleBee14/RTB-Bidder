@@ -678,6 +678,75 @@
       "targets": [
         { "expr": "sum by (name) (rate(container_network_transmit_bytes_total{name!=\"\"}[1m]))", "legendFormat": "{{name}}" }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Ad Funnel (bid → win → impression → click)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 128 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Funnel Events/sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 129 },
+      "datasource": "Prometheus",
+      "description": "The full ad lifecycle. Healthy ratio: bids >> wins >> impressions ≈ wins, clicks << impressions.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "rate(bid_responses_total{outcome=\"bid\"}[1m])", "legendFormat": "bids/sec" },
+        { "expr": "rate(wins_total[1m])",        "legendFormat": "wins/sec" },
+        { "expr": "rate(impressions_total[1m])", "legendFormat": "impressions/sec" },
+        { "expr": "rate(clicks_total[1m])",      "legendFormat": "clicks/sec" }
+      ]
+    },
+    {
+      "title": "Win Rate",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 129 },
+      "datasource": "Prometheus",
+      "description": "Wins / Bids. The 'did we actually win the auction?' number.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "yellow", "value": 0.1 }, { "color": "green", "value": 0.3 }] }
+        }
+      },
+      "targets": [
+        { "expr": "win_rate", "legendFormat": "win rate" }
+      ]
+    },
+    {
+      "title": "CTR",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 129 },
+      "datasource": "Prometheus",
+      "description": "Clicks / Impressions. The quality-of-match signal; directly feeds ML training.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit", "min": 0, "max": 0.1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "yellow", "value": 0.01 }, { "color": "green", "value": 0.05 }] }
+        }
+      },
+      "targets": [
+        { "expr": "ctr", "legendFormat": "CTR" }
+      ]
+    },
+    {
+      "title": "Cumulative Funnel Counts",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 133 },
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "bid_requests_total",                          "legendFormat": "requests" },
+        { "expr": "sum(bid_responses_total{outcome=\"bid\"})",   "legendFormat": "bids" },
+        { "expr": "wins_total",                                  "legendFormat": "wins" },
+        { "expr": "impressions_total",                           "legendFormat": "impressions" },
+        { "expr": "clicks_total",                                "legendFormat": "clicks" }
+      ]
     }
   ],
   "refresh": "10s",

@@ -3,6 +3,7 @@ package com.rtb.server;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rtb.event.EventPublisher;
 import com.rtb.event.events.WinEvent;
+import com.rtb.metrics.BidMetrics;
 import com.rtb.model.WinNotification;
 import io.vertx.core.Handler;
 import io.vertx.core.buffer.Buffer;
@@ -19,10 +20,12 @@ public final class WinHandler implements Handler<RoutingContext> {
 
     private final ObjectMapper objectMapper;
     private final EventPublisher eventPublisher;
+    private final BidMetrics bidMetrics;
 
-    public WinHandler(ObjectMapper objectMapper, EventPublisher eventPublisher) {
+    public WinHandler(ObjectMapper objectMapper, EventPublisher eventPublisher, BidMetrics bidMetrics) {
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
+        this.bidMetrics = bidMetrics;
     }
 
     @Override
@@ -47,6 +50,7 @@ public final class WinHandler implements Handler<RoutingContext> {
             eventPublisher.publishWin(new WinEvent(
                     notification.bidId(), notification.campaignId(),
                     notification.clearingPrice(), Instant.now()));
+            bidMetrics.recordWin();
 
         } catch (Exception e) {
             logger.error("Failed to process win notification", e);

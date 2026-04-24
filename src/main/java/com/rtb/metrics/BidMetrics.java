@@ -36,12 +36,21 @@ public final class BidMetrics {
     private final Counter frequencyCapHitTotal;
     private final Counter budgetExhaustedTotal;
 
+    // Full ad-serving funnel — bid → win → impression → click
+    // The revenue-driving metrics any ad-tech business watches weekly.
+    private final Counter winsTotal;
+    private final Counter impressionsTotal;
+    private final Counter clicksTotal;
+
     // Per-stage timer cache — avoid Timer.builder().register() per call on hot path
     private final ConcurrentHashMap<String, Timer> stageTimers = new ConcurrentHashMap<>();
 
-    // Fill rate tracking
+    // Funnel counters backing win_rate / ctr gauges
     private final AtomicLong totalRequests = new AtomicLong();
     private final AtomicLong totalBids = new AtomicLong();
+    private final AtomicLong totalWins = new AtomicLong();
+    private final AtomicLong totalImpressions = new AtomicLong();
+    private final AtomicLong totalClicks = new AtomicLong();
 
     public BidMetrics(MeterRegistry registry) {
         this.registry = registry;
@@ -79,10 +88,32 @@ public final class BidMetrics {
                 .description("Requests where winner budget was exhausted")
                 .register(registry);
 
+        this.winsTotal = Counter.builder("wins_total")
+                .description("Win notifications received from exchange")
+                .register(registry);
+        this.impressionsTotal = Counter.builder("impressions_total")
+                .description("Impression pixels fired")
+                .register(registry);
+        this.clicksTotal = Counter.builder("clicks_total")
+                .description("Click-throughs recorded")
+                .register(registry);
+
         // Fill rate as a gauge — THE core business metric
         registry.gauge("bid_fill_rate", this, m -> {
             long total = m.totalRequests.get();
             return total == 0 ? 0.0 : (double) m.totalBids.get() / total;
+        });
+
+        // Win rate = wins / bids. The "did we actually win the auction?" number.
+        registry.gauge("win_rate", this, m -> {
+            long bids = m.totalBids.get();
+            return bids == 0 ? 0.0 : (double) m.totalWins.get() / bids;
+        });
+
+        // CTR = clicks / impressions. The revenue-per-show quality signal.
+        registry.gauge("ctr", this, m -> {
+            long imps = m.totalImpressions.get();
+            return imps == 0 ? 0.0 : (double) m.totalClicks.get() / imps;
         });
     }
 
@@ -130,5 +161,20 @@ public final class BidMetrics {
 
     public void recordBudgetExhausted() {
         budgetExhaustedTotal.increment();
+    }
+
+    public void recordWin() {
+        winsTotal.increment();
+        totalWins.incrementAndGet();
+    }
+
+    public void recordImpression() {
+        impressionsTotal.increment();
+        totalImpressions.incrementAndGet();
+    }
+
+    public void recordClick() {
+        clicksTotal.increment();
+        totalClicks.incrementAndGet();
     }
 }

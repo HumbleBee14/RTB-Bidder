@@ -3,6 +3,7 @@ package com.rtb.server;
 import com.rtb.event.EventPublisher;
 import com.rtb.event.events.ClickEvent;
 import com.rtb.event.events.ImpressionEvent;
+import com.rtb.metrics.BidMetrics;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.ext.web.RoutingContext;
 import org.slf4j.Logger;
@@ -37,9 +38,11 @@ public final class TrackingHandler {
             java.util.regex.Pattern.compile("^[A-Za-z0-9._:-]{1,128}$");
 
     private final EventPublisher eventPublisher;
+    private final BidMetrics bidMetrics;
 
-    public TrackingHandler(EventPublisher eventPublisher) {
+    public TrackingHandler(EventPublisher eventPublisher, BidMetrics bidMetrics) {
         this.eventPublisher = eventPublisher;
+        this.bidMetrics = bidMetrics;
     }
 
     public void handleImpression(RoutingContext ctx) {
@@ -63,6 +66,7 @@ public final class TrackingHandler {
                 .end(TRACKING_PIXEL);
 
         eventPublisher.publishImpression(new ImpressionEvent(bidId, userId, campaignId, slotId, Instant.now()));
+        bidMetrics.recordImpression();
     }
 
     public void handleClick(RoutingContext ctx) {
@@ -85,6 +89,7 @@ public final class TrackingHandler {
                 .end("{\"status\":\"click_tracked\",\"bid_id\":\"" + bidId + "\"}");
 
         eventPublisher.publishClick(new ClickEvent(bidId, userId, campaignId, slotId, Instant.now()));
+        bidMetrics.recordClick();
     }
 
     /** Returns the value if it's a safe, short ID; null otherwise. */

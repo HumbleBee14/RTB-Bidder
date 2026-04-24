@@ -115,8 +115,13 @@ public final class Application {
         PipelineConfig pipelineConfig = PipelineConfig.from(config);
         RedisConfig redisConfig = RedisConfig.from(config);
 
+        // Metrics — created first so Redis client Timers and circuit breaker
+        // gauges can register against it during their construction.
+        MetricsRegistry metricsRegistry = new MetricsRegistry();
+
         // Repositories
-        RedisUserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(redisConfig);
+        RedisUserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(
+                redisConfig, metricsRegistry.registry());
         Runtime.getRuntime().addShutdownHook(new Thread(userSegmentRepo::close, "shutdown-redis"));
 
         CampaignRepository campaignRepo = createCampaignRepository(config, objectMapper);
@@ -126,11 +131,9 @@ public final class Application {
         if (scorer instanceof AutoCloseable closeableScorer) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeableScorer), "shutdown-scorer"));
         }
-        RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
+        RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(
+                redisConfig, metricsRegistry.registry());
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
-
-        // Metrics (created early — circuit breakers register gauges)
-        MetricsRegistry metricsRegistry = new MetricsRegistry();
 
         // Resilience — separate circuit breakers for Redis and Kafka
         int redisFailures = config.getInt("resilience.redis.failure.threshold", 5);

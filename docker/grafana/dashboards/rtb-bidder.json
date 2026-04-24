@@ -407,9 +407,24 @@
       "panels": []
     },
     {
+      "title": "Redis — Client-side Command Latency (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 53 },
+      "datasource": "Prometheus",
+      "description": "Bidder-observed Lettuce RTT per Redis command. Different from stage latency (which also counts local work) and server-side (which doesn't include network). Spread tells you whether slowness is client, network, or server.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 5, "lineWidth": 2 }, "unit": "ms" }
+      },
+      "targets": [
+        { "expr": "redis_client_command_duration_seconds{quantile=\"0.5\"}   * 1000", "legendFormat": "{{command}} p50" },
+        { "expr": "redis_client_command_duration_seconds{quantile=\"0.99\"}  * 1000", "legendFormat": "{{command}} p99" },
+        { "expr": "redis_client_command_duration_seconds{quantile=\"0.999\"} * 1000", "legendFormat": "{{command}} p999" }
+      ]
+    },
+    {
       "title": "Redis — Memory",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 53 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 61 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "bytes" }
@@ -422,7 +437,7 @@
     {
       "title": "Redis — Connected Clients",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 53 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 61 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
@@ -434,7 +449,7 @@
     {
       "title": "Redis — Ops/sec by command",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 53 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 61 },
       "datasource": "Prometheus",
       "description": "Per-command rate — shows whether traffic is dominated by SMEMBERS (segments), INCR (freq cap), or DECRBY (budget)",
       "fieldConfig": {
@@ -447,7 +462,7 @@
     {
       "title": "Redis — Keyspace Hits vs Misses",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 61 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 69 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
@@ -460,7 +475,7 @@
     {
       "title": "Redis — Evictions & Expirations",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 61 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 69 },
       "datasource": "Prometheus",
       "description": "Evictions climbing means Redis is out of memory and dropping data — data loss event.",
       "fieldConfig": {
@@ -474,14 +489,14 @@
     {
       "type": "row",
       "title": "Kafka (broker-side)",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 69 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 77 },
       "collapsed": false,
       "panels": []
     },
     {
       "title": "Kafka — Messages In/sec per topic",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 70 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 78 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
@@ -493,7 +508,7 @@
     {
       "title": "Kafka — Consumer Group Lag (messages)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 70 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 78 },
       "datasource": "Prometheus",
       "description": "Lag growing = consumers falling behind producers — events pile up in Kafka.",
       "fieldConfig": {
@@ -506,7 +521,7 @@
     {
       "title": "Kafka — Log End Offset per topic",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 78 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 86 },
       "datasource": "Prometheus",
       "description": "Cumulative messages ever produced per topic — flat line = no events flowing.",
       "fieldConfig": {
@@ -519,7 +534,7 @@
     {
       "title": "Kafka — Under-replicated Partitions",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 78 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 86 },
       "datasource": "Prometheus",
       "description": "Should always be 0 in a healthy cluster. Non-zero = broker failure or replication lag.",
       "fieldConfig": {
@@ -532,14 +547,14 @@
     {
       "type": "row",
       "title": "PostgreSQL",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 86 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 94 },
       "collapsed": false,
       "panels": []
     },
     {
       "title": "PG — Connections",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 87 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 95 },
       "datasource": "Prometheus",
       "description": "Climbing = connection leak. Flat near max = pool saturation, new queries will wait.",
       "fieldConfig": {
@@ -553,7 +568,7 @@
     {
       "title": "PG — Transactions/sec (commits & rollbacks)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 87 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 95 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
@@ -566,7 +581,7 @@
     {
       "title": "PG — Cache Hit Ratio",
       "type": "gauge",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 87 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 95 },
       "datasource": "Prometheus",
       "description": "Healthy is >99%. Lower means queries hitting disk — latency spikes likely.",
       "fieldConfig": {
@@ -585,14 +600,14 @@
     {
       "type": "row",
       "title": "Containers (cAdvisor)",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 95 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 103 },
       "collapsed": false,
       "panels": []
     },
     {
       "title": "Per-Container CPU",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 96 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 104 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "percentunit" }
@@ -604,7 +619,7 @@
     {
       "title": "Per-Container Memory (RSS)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 96 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 104 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "bytes" }
@@ -616,7 +631,7 @@
     {
       "title": "Per-Container Network RX",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 104 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 112 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "Bps" }
@@ -628,7 +643,7 @@
     {
       "title": "Per-Container Network TX",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 104 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 112 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "Bps" }

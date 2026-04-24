@@ -6,6 +6,8 @@ import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,8 +37,10 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
     private final RedisClient client;
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String> commands;
+    private final Timer getTimer;
+    private final Timer evalTimer;
 
-    public RedisFrequencyCapper(RedisConfig config) {
+    public RedisFrequencyCapper(RedisConfig config, MeterRegistry registry) {
         RedisURI uri = RedisURI.create(config.uri());
         uri.setTimeout(Duration.ofMillis(config.connectTimeoutMs()));
 
@@ -45,13 +49,22 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
         this.commands = connection.sync();
         connection.setTimeout(Duration.ofMillis(config.commandTimeoutMs()));
 
+        this.getTimer = Timer.builder("redis_client_command_duration_seconds")
+                .tag("command", "get")
+                .publishPercentiles(0.5, 0.9, 0.99, 0.999)
+                .register(registry);
+        this.evalTimer = Timer.builder("redis_client_command_duration_seconds")
+                .tag("command", "eval")
+                .publishPercentiles(0.5, 0.9, 0.99, 0.999)
+                .register(registry);
+
         logger.info("FrequencyCapper connected to Redis: {}:{}", uri.getHost(), uri.getPort());
     }
 
     @Override
     public boolean isAllowed(String userId, String campaignId, int maxImpressions) {
         String key = "freq:" + userId + ":" + campaignId;
-        String value = commands.get(key);
+        String value = getTimer.record(() -> commands.get(key));
         long count = value != null ? Long.parseLong(value) : 0;
         return count < maxImpressions;
     }
@@ -59,8 +72,8 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
     @Override
     public void recordImpression(String userId, String campaignId) {
         String key = "freq:" + userId + ":" + campaignId;
-        commands.eval(INCR_WITH_EXPIRE_SCRIPT, ScriptOutputType.INTEGER,
-                new String[]{key}, String.valueOf(WINDOW_SECONDS));
+        evalTimer.record(() -> commands.eval(INCR_WITH_EXPIRE_SCRIPT, ScriptOutputType.INTEGER,
+                new String[]{key}, String.valueOf(WINDOW_SECONDS)));
     }
 
     @Override

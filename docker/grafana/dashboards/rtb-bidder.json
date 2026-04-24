@@ -300,6 +300,104 @@
           "legendFormat": "{{action}}"
         }
       ]
+    },
+    {
+      "title": "No-Bid Reasons (per sec)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 36 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 30, "lineWidth": 1, "stacking": { "mode": "normal" } },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(bid_responses_total{outcome=\"nobid\"}[1m])",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "title": "Event Loop Lag (ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 36 },
+      "datasource": "Prometheus",
+      "description": "Drift between scheduled and actual execution of a 100ms probe on the event loop. Spike = loop was blocked.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "event_loop_lag_seconds{quantile=\"0.5\"} * 1000",  "legendFormat": "p50" },
+        { "expr": "event_loop_lag_seconds{quantile=\"0.9\"} * 1000",  "legendFormat": "p90" },
+        { "expr": "event_loop_lag_seconds{quantile=\"0.99\"} * 1000", "legendFormat": "p99" },
+        { "expr": "event_loop_lag_seconds{quantile=\"0.999\"} * 1000","legendFormat": "p99.9" }
+      ]
+    },
+    {
+      "title": "BidContext Pool",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 36 },
+      "datasource": "Prometheus",
+      "description": "If total_created keeps growing after warmup, the pool is undersized and we're allocating on the hot path (Phase 11 regression).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "bid_context_pool_available",     "legendFormat": "available" },
+        { "expr": "bid_context_pool_total_created", "legendFormat": "total created (cumulative)" }
+      ]
+    },
+    {
+      "title": "CPU Utilization",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "percentunit",
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "process_cpu_usage", "legendFormat": "process" },
+        { "expr": "system_cpu_usage",  "legendFormat": "system" }
+      ]
+    },
+    {
+      "title": "JVM Threads",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "jvm_threads_live_threads",   "legendFormat": "live" },
+        { "expr": "jvm_threads_daemon_threads", "legendFormat": "daemon" },
+        { "expr": "jvm_threads_peak_threads",   "legendFormat": "peak" }
+      ]
     }
   ],
   "refresh": "10s",

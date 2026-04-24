@@ -747,6 +747,39 @@
         { "expr": "impressions_total",                           "legendFormat": "impressions" },
         { "expr": "clicks_total",                                "legendFormat": "clicks" }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Per-Campaign",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 137 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Per-Campaign Bids/sec",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 138 },
+      "datasource": "Prometheus",
+      "description": "Which campaigns absorb traffic. Flat = starving (targeting too narrow, or pacing cap). Spike = dominating (check other campaigns aren't frozen out).",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "rate(campaign_bids_total[1m])", "legendFormat": "{{campaign_id}}" }
+      ]
+    },
+    {
+      "title": "Per-Campaign Win Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 138 },
+      "datasource": "Prometheus",
+      "description": "Campaign-level win rate. Low = bid prices too low for the slot; high = bidding too aggressively (budget will deplete).",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "percentunit" }
+      },
+      "targets": [
+        { "expr": "rate(campaign_wins_total[5m]) / rate(campaign_bids_total[5m])", "legendFormat": "{{campaign_id}}" }
+      ]
     }
   ],
   "refresh": "10s",

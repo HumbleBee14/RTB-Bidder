@@ -45,6 +45,12 @@ public final class BidMetrics {
     // Per-stage timer cache — avoid Timer.builder().register() per call on hot path
     private final ConcurrentHashMap<String, Timer> stageTimers = new ConcurrentHashMap<>();
 
+    // Per-campaign counters — bounded cardinality (10-100 campaigns) so safe for
+    // Prometheus. Lets ops see which campaigns are winning / losing / burning
+    // budget fastest, without scraping logs.
+    private final ConcurrentHashMap<String, Counter> campaignBidsByCampaign = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Counter> campaignWinsByCampaign = new ConcurrentHashMap<>();
+
     // Funnel counters backing win_rate / ctr gauges
     private final AtomicLong totalRequests = new AtomicLong();
     private final AtomicLong totalBids = new AtomicLong();
@@ -166,6 +172,24 @@ public final class BidMetrics {
     public void recordWin() {
         winsTotal.increment();
         totalWins.incrementAndGet();
+    }
+
+    public void recordCampaignBid(String campaignId) {
+        campaignBidsByCampaign.computeIfAbsent(campaignId, id ->
+                Counter.builder("campaign_bids_total")
+                        .tag("campaign_id", id)
+                        .description("Bids attributed to a specific campaign")
+                        .register(registry)
+        ).increment();
+    }
+
+    public void recordCampaignWin(String campaignId) {
+        campaignWinsByCampaign.computeIfAbsent(campaignId, id ->
+                Counter.builder("campaign_wins_total")
+                        .tag("campaign_id", id)
+                        .description("Wins attributed to a specific campaign")
+                        .register(registry)
+        ).increment();
     }
 
     public void recordImpression() {

@@ -104,6 +104,11 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
             List<String[]> winnerIds = bidCtx.getSlotWinners().values().stream()
                     .map(w -> new String[]{userId, w.getCampaign().id()})
                     .toList();
+
+            // Per-campaign bid attribution (cardinality bounded by campaign count)
+            for (String[] ids : winnerIds) {
+                bidMetrics.recordCampaignBid(ids[1]);
+            }
             List<BidEvent.SlotBidInfo> slotBids = bidCtx.getResponse().bids().stream()
                     .map(b -> new BidEvent.SlotBidInfo(b.slotId(), b.adId(), b.price()))
                     .toList();

@@ -51,6 +51,7 @@ public final class WinHandler implements Handler<RoutingContext> {
                     notification.bidId(), notification.campaignId(),
                     notification.clearingPrice(), Instant.now()));
             bidMetrics.recordWin();
+            bidMetrics.recordCampaignWin(notification.campaignId());
 
         } catch (Exception e) {
             logger.error("Failed to process win notification", e);

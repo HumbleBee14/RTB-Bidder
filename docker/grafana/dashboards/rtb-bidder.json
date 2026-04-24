@@ -462,7 +462,7 @@
     {
       "title": "Redis — Keyspace Hits vs Misses",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 69 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 77 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
@@ -475,7 +475,7 @@
     {
       "title": "Redis — Evictions & Expirations",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 69 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 77 },
       "datasource": "Prometheus",
       "description": "Evictions climbing means Redis is out of memory and dropping data — data loss event.",
       "fieldConfig": {
@@ -487,16 +487,43 @@
       ]
     },
     {
+      "title": "Kafka — Client Send Rate (records/sec)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 77 },
+      "datasource": "Prometheus",
+      "description": "Bidder-side producer metrics from Micrometer KafkaClientMetrics — how many events we're actually sending (vs what broker receives).",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "kafka_producer_record_send_rate", "legendFormat": "{{client_id}}" }
+      ]
+    },
+    {
+      "title": "Kafka — Client Retry / Error Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 77 },
+      "datasource": "Prometheus",
+      "description": "Retries climbing = broker not acking; errors climbing = permanent failures (will degrade to circuit-break).",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "kafka_producer_record_retry_rate", "legendFormat": "retries" },
+        { "expr": "kafka_producer_record_error_rate", "legendFormat": "errors" }
+      ]
+    },
+    {
       "type": "row",
       "title": "Kafka (broker-side)",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 77 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 85 },
       "collapsed": false,
       "panels": []
     },
     {
       "title": "Kafka — Messages In/sec per topic",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 78 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 86 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
@@ -508,7 +535,7 @@
     {
       "title": "Kafka — Consumer Group Lag (messages)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 78 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 86 },
       "datasource": "Prometheus",
       "description": "Lag growing = consumers falling behind producers — events pile up in Kafka.",
       "fieldConfig": {
@@ -521,7 +548,7 @@
     {
       "title": "Kafka — Log End Offset per topic",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 86 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 94 },
       "datasource": "Prometheus",
       "description": "Cumulative messages ever produced per topic — flat line = no events flowing.",
       "fieldConfig": {
@@ -534,7 +561,7 @@
     {
       "title": "Kafka — Under-replicated Partitions",
       "type": "stat",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 86 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 94 },
       "datasource": "Prometheus",
       "description": "Should always be 0 in a healthy cluster. Non-zero = broker failure or replication lag.",
       "fieldConfig": {
@@ -547,14 +574,14 @@
     {
       "type": "row",
       "title": "PostgreSQL",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 94 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 102 },
       "collapsed": false,
       "panels": []
     },
     {
       "title": "PG — Connections",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 95 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 103 },
       "datasource": "Prometheus",
       "description": "Climbing = connection leak. Flat near max = pool saturation, new queries will wait.",
       "fieldConfig": {
@@ -568,7 +595,7 @@
     {
       "title": "PG — Transactions/sec (commits & rollbacks)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 95 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 103 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
@@ -581,7 +608,7 @@
     {
       "title": "PG — Cache Hit Ratio",
       "type": "gauge",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 95 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 103 },
       "datasource": "Prometheus",
       "description": "Healthy is >99%. Lower means queries hitting disk — latency spikes likely.",
       "fieldConfig": {
@@ -600,14 +627,14 @@
     {
       "type": "row",
       "title": "Containers (cAdvisor)",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 103 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 111 },
       "collapsed": false,
       "panels": []
     },
     {
       "title": "Per-Container CPU",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 104 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 112 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "percentunit" }
@@ -619,7 +646,7 @@
     {
       "title": "Per-Container Memory (RSS)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 104 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 112 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "bytes" }
@@ -631,7 +658,7 @@
     {
       "title": "Per-Container Network RX",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 112 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 120 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "Bps" }
@@ -643,7 +670,7 @@
     {
       "title": "Per-Container Network TX",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 112 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 120 },
       "datasource": "Prometheus",
       "fieldConfig": {
         "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "Bps" }

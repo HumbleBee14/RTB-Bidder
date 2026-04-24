@@ -188,7 +188,8 @@ public final class Application {
         // Event publishing — Kafka async failures feed into circuit breaker
         CircuitBreaker kafkaCircuitBreaker = new CircuitBreaker("kafka-events", kafkaFailures, kafkaCooldown);
         kafkaCircuitBreaker.registerMetrics(metricsRegistry.registry());
-        EventPublisher rawEventPublisher = createEventPublisher(config, kafkaCircuitBreaker::recordExternalFailure);
+        EventPublisher rawEventPublisher = createEventPublisher(
+                config, kafkaCircuitBreaker::recordExternalFailure, metricsRegistry.registry());
         if (rawEventPublisher instanceof AutoCloseable closeablePublisher) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePublisher), "shutdown-events"));
         }
@@ -285,11 +286,12 @@ public final class Application {
     }
 
     private static EventPublisher createEventPublisher(AppConfig config,
-                                                        java.util.function.Consumer<Exception> failureCallback) {
+                                                        java.util.function.Consumer<Exception> failureCallback,
+                                                        io.micrometer.core.instrument.MeterRegistry registry) {
         String type = config.get("events.type", "noop");
         logger.info("Event publisher: {}", type);
         return switch (type) {
-            case "kafka" -> new KafkaEventPublisher(config, failureCallback);
+            case "kafka" -> new KafkaEventPublisher(config, failureCallback, registry);
             default -> {
                 logger.info("Using NoOp event publisher (events logged at DEBUG level)");
                 yield new NoOpEventPublisher();

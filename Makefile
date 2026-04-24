@@ -113,7 +113,7 @@ infra-status:				## Show running container status
 
 .PHONY: seed-redis
 seed-redis:				## Seed Redis with 10K test users (run once after infra-up)
-	bash docker/init-redis.sh | docker exec -i $$(docker ps -qf name=redis) redis-cli
+	bash docker/init-redis.sh | docker exec -i $$(docker ps -qf name=redis-1) redis-cli
 
 # ── 6. Verify / test ──────────────────────────────────────────────────────────
 

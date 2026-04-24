@@ -48,6 +48,10 @@ services:
       - "--kafka.server=kafka:29092"
     ports:
       - "9308:9308"
+    # Kafka takes a few seconds to open its broker listener; depends_on only
+    # waits for the container to start, not for Kafka to be ready.
+    # restart:unless-stopped gives the exporter retry-until-success behaviour.
+    restart: unless-stopped
     depends_on:
       - kafka
 

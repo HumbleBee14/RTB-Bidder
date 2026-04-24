@@ -93,14 +93,92 @@ Adversarial check: `docker pause $(docker ps -qf name=redis)` while traffic is f
 
 Then `docker unpause` and watch the system recover.
 
-## What's deferred
+## Second pass — full production observability stack
 
-Not in scope for this phase, noted for later:
+After the initial gap-fill above, we expanded scope to match what a real
+ad-tech production stack watches. Everything below is also part of Phase 16.
 
-- **Redis command latency** as a separate timer — stage latency currently bundles Redis RTT + JSON decode + other work
-- **Kafka producer queue depth + publish latency** — events are fire-and-forget; pile-up isn't visible
-- **Per-campaign metrics** (fill rate, budget burn rate per `campaign_id`)
-- **Win / CTR funnel gauges** — we publish the events but don't gauge the rates
-- **File descriptor usage** — needs `FileDescriptorMetrics` binder
+### Infrastructure exporters (4 new services)
 
-These get their own phase once baseline + stress test results show which of them is actually the next blind spot.
+| Service | Image | Port | What it exposes |
+|---|---|---|---|
+| `redis-exporter` | oliver006/redis_exporter:v1.62.0 | 9121 | Redis memory, connected clients, per-command latency, evictions, keyspace hits/misses |
+| `kafka-exporter` | danielqsj/kafka-exporter:v1.8.0 | 9308 | Broker-side topic lag, partition throughput, consumer group lag, under-replicated partitions |
+| `postgres-exporter` | prometheuscommunity/postgres-exporter:v0.15.0 | 9187 | Query rate, active connections, commits/rollbacks, cache hit ratio |
+| `cadvisor` | gcr.io/cadvisor/cadvisor:v0.49.1 | 8081 | Per-container CPU, memory, network RX/TX, disk IO for every service |
+
+Each has its own scrape config in `prometheus.yml` and a dedicated Grafana
+section with 3-5 panels.
+
+### Bidder-side instrumentation
+
+**Redis client command latency** — `RedisUserSegmentRepository` and
+`RedisFrequencyCapper` now wrap Lettuce calls in a `Timer` tagged
+`command={smembers,get,eval}`. New metric:
+`redis_client_command_duration_seconds`. Together with the server-side
+metrics from `redis-exporter` and the existing stage latency, you get three
+views of Redis performance and can triangulate where slowness lives.
+
+**Kafka producer client metrics** — `KafkaEventPublisher` binds Micrometer's
+`KafkaClientMetrics` to the producer instance. Exposes `kafka_producer_*`
+series including send rate, batch size, retry count, buffer exhaustion,
+per-topic throughput. Closed on shutdown before the producer.
+
+**Ad funnel counters and gauges** — `BidMetrics` now tracks the full lifecycle:
+
+```
+bid → win → impression → click
+```
+
+New counters: `wins_total`, `impressions_total`, `clicks_total`.
+New gauges: `win_rate = wins/bids`, `ctr = clicks/impressions`.
+`WinHandler.recordWin()` fires on win notifications, `TrackingHandler`
+records impressions and clicks.
+
+**Per-campaign metrics** — `BidMetrics.recordCampaignBid(campaignId)` and
+`recordCampaignWin(campaignId)` emit `campaign_bids_total` and
+`campaign_wins_total` with `campaign_id` as a label. Cardinality bounded
+by campaign count (10-100 in production) — safe for Prometheus.
+`BidRequestHandler` records per-winner; `WinHandler` records per-win.
+
+### Dashboard extensions
+
+Added new sections in Grafana, each with its own row header:
+
+- **Redis** — client-side latency, memory, clients, ops/sec per command, keyspace hits/misses, evictions
+- **Kafka** — client send/retry/error rate, broker topic throughput, consumer lag, under-replicated partitions
+- **PostgreSQL** — connections, transactions/sec, cache hit ratio
+- **Containers (cAdvisor)** — per-container CPU, memory, network RX/TX
+- **Ad Funnel** — events/sec timeseries, win rate and CTR gauges, cumulative counts
+- **Per-Campaign** — bids/sec per campaign, per-campaign win rate
+
+Grid positions were kept consistent — each new section sits at increasing
+y offsets below existing panels, no overlap.
+
+### What's intentionally deferred (Phase 17+)
+
+- **Loki + Promtail (log aggregation)** — changes logback config and
+  adds two services; warrants its own phase after we've run tests and
+  know which log queries we actually need.
+- **OpenTelemetry / Jaeger distributed tracing** — significant code
+  instrumentation per stage; ROI is lower for a single-JVM bidder where
+  per-stage latency already tells us where time is spent.
+- **Prometheus AlertManager** — alert rules without a notification sink
+  (Slack, PagerDuty, email) are pointless. Defer until we have a channel.
+- **FileDescriptorMetrics binder** — minor; JVM handle count rarely
+  matters for a bidder this size.
+
+## Verification performed
+
+- Full `docker-compose up -d` brings up all 10 services (6 original + 4 exporters).
+- `curl localhost:9090/api/v1/targets` — all 5 Prometheus scrape jobs report `up`.
+- Bidder starts cleanly with `EVENTS_TYPE=kafka`; event-loop lag probe logs confirm it's running.
+- `/metrics` exposes all new series: `event_loop_lag_seconds`, `bid_context_pool_*`,
+  `redis_client_command_duration_seconds`, `kafka_producer_*`, `wins_total`,
+  `impressions_total`, `clicks_total`, `win_rate`, `ctr`,
+  `campaign_bids_total`, `campaign_wins_total`, `bid_responses_total{reason=...}`.
+- Fired 50 bid requests → `bid_responses_total{reason="matched"}` = 50,
+  `campaign_bids_total` breaks down by `camp-003/004/006/007/008/009`,
+  `bid_context_pool_available` = 1 (pool parking used contexts).
+- Win + impression + click → funnel counters populate, `ctr` and `win_rate`
+  compute correctly.

@@ -470,6 +470,64 @@
         { "expr": "rate(redis_evicted_keys_total[1m])", "legendFormat": "evictions/sec" },
         { "expr": "rate(redis_expired_keys_total[1m])", "legendFormat": "expirations/sec" }
       ]
+    },
+    {
+      "type": "row",
+      "title": "Kafka (broker-side)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 69 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Kafka — Messages In/sec per topic",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 70 },
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset[1m]))", "legendFormat": "{{topic}}" }
+      ]
+    },
+    {
+      "title": "Kafka — Consumer Group Lag (messages)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 70 },
+      "datasource": "Prometheus",
+      "description": "Lag growing = consumers falling behind producers — events pile up in Kafka.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag)", "legendFormat": "{{consumergroup}} / {{topic}}" }
+      ]
+    },
+    {
+      "title": "Kafka — Log End Offset per topic",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 78 },
+      "datasource": "Prometheus",
+      "description": "Cumulative messages ever produced per topic — flat line = no events flowing.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "custom": { "fillOpacity": 10, "lineWidth": 2 }, "unit": "short" }
+      },
+      "targets": [
+        { "expr": "sum by (topic) (kafka_topic_partition_current_offset)", "legendFormat": "{{topic}}" }
+      ]
+    },
+    {
+      "title": "Kafka — Under-replicated Partitions",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 78 },
+      "datasource": "Prometheus",
+      "description": "Should always be 0 in a healthy cluster. Non-zero = broker failure or replication lag.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": 0 }, { "color": "red", "value": 1 }] } }
+      },
+      "targets": [
+        { "expr": "kafka_topic_partition_under_replicated_partition", "legendFormat": "{{topic}}/{{partition}}" }
+      ]
     }
   ],
   "refresh": "10s",

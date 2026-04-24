@@ -16,3 +16,8 @@ scrape_configs:
   - job_name: 'redis'
     static_configs:
       - targets: ['redis-exporter:9121']
+
+  # Kafka broker-side metrics (topic lag, partition throughput, consumer lag)
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-exporter:9308']

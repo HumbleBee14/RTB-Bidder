@@ -37,6 +37,20 @@ services:
     volumes:
       - kafka-data:/var/lib/kafka/data
 
+  # Exposes Kafka broker-level metrics (topic lag, partition throughput,
+  # consumer group lag, broker-level offset gaps) for Prometheus on :9308.
+  # Kafka clients emit their own metrics (see KafkaClientMetrics binder on
+  # the bidder); this exporter gives the SERVER-side view so we can see
+  # when brokers themselves are slow/backlogged.
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    command:
+      - "--kafka.server=kafka:29092"
+    ports:
+      - "9308:9308"
+    depends_on:
+      - kafka
+
   postgres:
     image: postgres:16-alpine
     ports:

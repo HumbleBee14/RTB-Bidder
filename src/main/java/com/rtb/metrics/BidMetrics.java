@@ -21,9 +21,13 @@ public final class BidMetrics {
     // Rate
     private final Counter bidRequestsTotal;
     private final Counter bidResponsesBid;
-    private final Counter bidResponsesNoBid;
     private final Counter bidResponsesError;
     private final Counter bidResponsesTimeout;
+
+    // No-bid counters keyed by NoBidReason — lets ops answer "why did fill rate drop?"
+    // Without this, a drop in fill rate looks identical whether caused by frequency
+    // capping, budget exhaustion, or a targeting regression.
+    private final ConcurrentHashMap<String, Counter> noBidByReason = new ConcurrentHashMap<>();
 
     // Duration
     private final Timer bidLatency;
@@ -48,19 +52,18 @@ public final class BidMetrics {
 
         this.bidResponsesBid = Counter.builder("bid_responses_total")
                 .tag("outcome", "bid")
-                .description("Bid responses by outcome")
-                .register(registry);
-
-        this.bidResponsesNoBid = Counter.builder("bid_responses_total")
-                .tag("outcome", "nobid")
+                .tag("reason", "matched")
+                .description("Bid responses by outcome and reason")
                 .register(registry);
 
         this.bidResponsesError = Counter.builder("bid_responses_total")
                 .tag("outcome", "error")
+                .tag("reason", "INTERNAL_ERROR")
                 .register(registry);
 
         this.bidResponsesTimeout = Counter.builder("bid_responses_total")
                 .tag("outcome", "timeout")
+                .tag("reason", "TIMEOUT")
                 .register(registry);
 
         this.bidLatency = Timer.builder("bid_latency_seconds")
@@ -98,7 +101,12 @@ public final class BidMetrics {
         switch (reason) {
             case "TIMEOUT" -> bidResponsesTimeout.increment();
             case "INTERNAL_ERROR" -> bidResponsesError.increment();
-            default -> bidResponsesNoBid.increment();
+            default -> noBidByReason.computeIfAbsent(reason, r ->
+                    Counter.builder("bid_responses_total")
+                            .tag("outcome", "nobid")
+                            .tag("reason", r)
+                            .register(registry)
+            ).increment();
         }
         bidLatency.record(latencyNanos, TimeUnit.NANOSECONDS);
     }

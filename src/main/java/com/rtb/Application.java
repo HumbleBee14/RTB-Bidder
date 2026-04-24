@@ -166,6 +166,14 @@ public final class Application {
 
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig, bidMetrics);
 
+        // Pool saturation gauges — validate the Phase 11 zero-alloc claim at runtime.
+        // If bid_context_pool_total_created keeps climbing after warmup, the pool is
+        // undersized and we're allocating on the hot path (GC pressure returns).
+        metricsRegistry.registry().gauge("bid_context_pool_available",
+                pipeline.getContextPool(), p -> p.poolSize());
+        metricsRegistry.registry().gauge("bid_context_pool_total_created",
+                pipeline.getContextPool(), p -> p.totalCreated());
+
         KafkaHealthCheck kafkaHealthCheck = new KafkaHealthCheck(config);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(kafkaHealthCheck), "shutdown-kafka-health"));
 

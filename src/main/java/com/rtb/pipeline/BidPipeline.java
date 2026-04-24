@@ -91,4 +91,9 @@ public final class BidPipeline {
     public void release(BidContext ctx) {
         contextPool.release(ctx);
     }
+
+    /** Exposes the pool so the composition root can register saturation gauges. */
+    public BidContextPool getContextPool() {
+        return contextPool;
+    }
 }

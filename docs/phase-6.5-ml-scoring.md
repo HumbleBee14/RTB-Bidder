@@ -163,6 +163,54 @@ Feature vector assembly is pure array writes — ~0.01ms.
 
 With 3-5 candidates per request, total scoring is 5-25ms. Within our 50ms SLA alongside Redis calls (~15ms), this fits. If scoring becomes the bottleneck, we batch candidates into a single inference call (ONNX supports batch input).
 
+### Candidate truncation: bounding scoring work at catalog scale
+
+The 1–5ms/candidate budget assumes a small candidate set. But it scales with catalog size:
+
+| Catalog | Avg candidates after targeting + freq-cap | ML scoring cost |
+|---|---|---|
+| 10 campaigns (Phase 1–16) | ~3 | 3–15 ms ✅ |
+| 1,000 campaigns (Phase 17) | ~278 | 278–1390 ms ❌ |
+| 10,000 campaigns | ~2,780 | 2.7–14 s ❌❌ |
+
+At 1,000+ campaigns, scoring everything blows the SLA. Production DSPs solve this with a **two-phase scoring funnel** — cheap pre-rank → top-N → expensive scoring.
+
+**`CandidateLimitStage` — between FrequencyCap and Scoring:**
+
+```
+… → CandidateRetrieval (~278) → FrequencyCap (~278) → CandidateLimit (top N)
+                                                            ▼
+                                                     Scoring (only N) → Rank → …
+```
+
+Why this exact placement:
+
+| Position | Trade-off |
+|---|---|
+| Before CandidateRetrieval | Can't — we don't yet know which campaigns target this user |
+| Before FrequencyCap | Would waste truncation slots on capped campaigns; freq-cap is cheap (1 MGET) |
+| **After FrequencyCap, before Scoring** | **Truncate the eligible set; score only what could actually win** |
+| After Scoring | Defeats the purpose — we already paid the scoring cost |
+
+**Pre-rank criterion: `value_per_click` (descending).** Pure data signal — no model lookup, no Redis call. Higher value-per-click campaigns are the most profitable to win, so this captures most of the upside while bounding work to O(N log N) for the sort. More sophisticated DSPs use a "shadow" cheap scorer (linear formula on the same features as the main model) — that's a future optimization.
+
+**Configuration — `pipeline.candidates.max`:**
+
+| Value | When to use | Notes |
+|---|---|---|
+| **0** (default) | Small catalogs, dev, testing | Pass-through, no sort cost. **Current default — unlimited.** |
+| 25–50 | Strict-latency profiles (sub-10ms SLA) | Aggressive truncation, may miss high-CTR long-tail |
+| 50–100 | Typical mid-size DSPs | Balanced — most production deployments live here |
+| 100–200 | Google-Ads / Meta-scale | Richer ML, more headroom, more campaigns surfaced |
+
+The stage is a true no-op when `max == 0` OR `candidates.size() <= max` — the sort never runs in those cases, so leaving the default at 0 costs nothing on the hot path. Set the limit explicitly when (a) the catalog grows past a few hundred campaigns AND (b) ML scoring shows up as a hotspot in `pipeline_stage_latency_seconds{stage="Scoring"}`.
+
+**Set via env:**
+
+```bash
+PIPELINE_CANDIDATES_MAX=100 make run-prod-load
+```
+
 ## Training Details
 
 ```

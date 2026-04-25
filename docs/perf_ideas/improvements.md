@@ -1,7 +1,7 @@
 # Notes — Performance Improvement Plan
 
 A forward-looking guide for extending per-instance throughput beyond the
-~5K RPS saturation knee surfaced in [LOAD-TEST-RESULTS-v3.md](LOAD-TEST-RESULTS-v3.md).
+~5K RPS saturation knee surfaced in [LOAD-TEST-RESULTS-v3.md](../LOAD-TEST-RESULTS-v3.md).
 
 This document is **both a plan and an explanation**. For each candidate
 improvement it covers:

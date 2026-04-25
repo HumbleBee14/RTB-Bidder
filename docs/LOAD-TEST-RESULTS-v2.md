@@ -486,7 +486,7 @@ frequently and stays cheaper when it does.
 
 **Heap header is unchanged.** Committed = 512 MB (because `-Xms == -Xmx` + AlwaysPreTouch);
 peak used was ~250 MB observed via Grafana, ~40 MB live working set per GC log. See
-[notes-perf-concepts.md](notes-perf-concepts.md) for why the committed line stays pinned.
+[notes-perf-concepts.md](notes/perf-concepts.md) for why the committed line stays pinned.
 
 ---
 
@@ -508,7 +508,7 @@ peak used was ~250 MB observed via Grafana, ~40 MB live working set per GC log. 
 | **Dropped iterations under load** | **0** across all tests | 3,017 (k6 couldn't keep up) |
 | **Peak concurrent VUs needed** | **2** for the entire test session | 3,076 (during ramp) |
 | **Error rate** | **0.00%** at every load level | **0.00%** at every load level (same — graceful degradation in both) |
-| **Heap peak (observed)** | ~250MB / 512MB cap (~49%) — JVM heap notes in [notes-perf-concepts.md](notes-perf-concepts.md) | 164MB / 512MB cap (32%) — never pressured |
+| **Heap peak (observed)** | ~250MB / 512MB cap (~49%) — JVM heap notes in [notes-perf-concepts.md](notes/perf-concepts.md) | 164MB / 512MB cap (32%) — never pressured |
 | **Live working set per GC cycle** | ~40 MB (8% of cap) | ~50 MB |
 | **ZGC max stop-the-world pause** | **0.053 ms** across 926 pause samples | 0.026 ms across 44 samples |
 | **ZGC avg stop-the-world pause** | **0.013 ms** | 0.011 ms |

@@ -25,7 +25,7 @@ first — was the heap full? — but it's the production pattern we explicitly c
 
 ### What you actually see on the dashboard
 
-![JVM Memory (Heap) panel during H.1 baseline](../results/screenshots/assets/jvm-memory-heap.png)
+![JVM Memory (Heap) panel during H.1 baseline](../../results/screenshots/assets/jvm-memory-heap.png)
 
 The flat horizontal band at the top is **Committed + Max** sitting on top of each other
 at 512 MiB. The wavy band oscillating around 100–200 MiB is **Used** — that's the only

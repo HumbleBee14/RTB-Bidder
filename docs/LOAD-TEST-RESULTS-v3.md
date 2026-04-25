@@ -183,7 +183,7 @@ All tightened thresholds passed (`p50<5`, `p95<10`, `p99<25`, `p99.9<50`,
 All k6 thresholds passed. **However**, k6's cumulative numbers dilute peak-stage
 behaviour with low-load samples — Grafana per-window percentiles tell a different
 story for the 5K RPS hold stage. See [notes-perf-concepts.md → "k6 cumulative
-percentiles vs Grafana per-window percentiles"](notes-perf-concepts.md) for the
+percentiles vs Grafana per-window percentiles"](notes/perf-concepts.md) for the
 underlying mechanics.
 
 ### Grafana panels — what actually happened at peak
@@ -385,7 +385,7 @@ The 5K data point is **past the SLA boundary**. Higher rates will be worse —
 the rest of the curve characterises how much worse.
 
 > **Lesson captured.** k6 VU sizing matters critically for stress tests.
-> See [notes-perf-concepts.md](notes-perf-concepts.md) for the full write-up
+> See [notes-perf-concepts.md](notes/perf-concepts.md) for the full write-up
 > on how a too-tight VU budget hides the slow tail.
 
 ### k6 console outputs
@@ -479,8 +479,8 @@ grep -E "Live:|Allocated:" results/gc.log | tail -50
 
 These were as instructive as the bidder results:
 
-1. **k6 cumulative percentiles can hide peak behaviour** when the workload shape varies. Always cross-check against per-window Grafana for ramp/spike profiles. Use constant-arrival-rate stress tests for honest per-rate numbers. _([notes-perf-concepts.md](notes-perf-concepts.md))_
-2. **Under-sized k6 VU pools silently drop the slow tail**. Same load, same code, same script: 100 VUs reported p99 = 10 ms; 1,250 VUs reported p99 = 64 ms. Always over-provision VUs. _([notes-perf-concepts.md](notes-perf-concepts.md))_
+1. **k6 cumulative percentiles can hide peak behaviour** when the workload shape varies. Always cross-check against per-window Grafana for ramp/spike profiles. Use constant-arrival-rate stress tests for honest per-rate numbers. _([notes-perf-concepts.md](notes/perf-concepts.md))_
+2. **Under-sized k6 VU pools silently drop the slow tail**. Same load, same code, same script: 100 VUs reported p99 = 10 ms; 1,250 VUs reported p99 = 64 ms. Always over-provision VUs. _([notes-perf-concepts.md](notes/perf-concepts.md))_
 3. **Tight thresholds with `abortOnFail` catch real regressions and bad data** within seconds. The catalog's missing-`970x250` bug was caught by the bid-rate threshold immediately, not after a full test ran.
 4. **Fair runs require known-clean state.** `docker-compose down -v` + reseed + bidder restart between independent runs prevents in-memory budgets / freq counters / JIT state from polluting comparisons.
 5. **The test rig has its own ceiling.** macOS ephemeral-port exhaustion at 200K RPS is the test rig saying "no further on this hardware," not the bidder. Knowing where the rig stops mattering is part of reading the data honestly.

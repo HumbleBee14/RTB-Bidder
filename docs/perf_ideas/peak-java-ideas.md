@@ -9,7 +9,7 @@ This is an **ideas catalogue** — not all of these will be done, and some are
 explicit "do not pursue." The point is to make every option visible with a
 reasoned recommendation so we don't leave wins on the table or chase mirages.
 
-For the **prioritised execution plan**, see [notes-perf-improvements.md](notes-perf-improvements.md).
+For the **prioritised execution plan**, see [improvements.md](improvements.md).
 This document goes broader and deeper.
 
 ---
@@ -140,7 +140,7 @@ SIMD-accelerated DOM-style parse. ~3× Jackson on whole-document scan.
 
 ### Lettuce sync → async on the same connection
 
-Already covered in detail in [notes-perf-improvements.md §1](notes-perf-improvements.md).
+Already covered in detail in [improvements.md §1](improvements.md).
 
 | API | Per-connection throughput |
 |---|---|
@@ -157,7 +157,7 @@ explicitly recommend against pooling for non-blocking GET/MGET workloads.
 Pooling helps only for `BLPOP`/`MULTI`/Pub-Sub.
 
 - **Verdict: skip.** Already documented as a misconception in
-  [notes-perf-improvements.md](notes-perf-improvements.md).
+  [improvements.md](improvements.md).
 
 ### RESP3 protocol
 
@@ -229,7 +229,7 @@ calls it for predictions only, doesn't host the model itself.
 
 ### ZGC tuning
 
-Already covered in [notes-perf-improvements.md §2](notes-perf-improvements.md).
+Already covered in [improvements.md §2](improvements.md).
 Headlines: heap 512 MB → 2 GB, `-XX:SoftMaxHeapSize=1500m`, generational ZGC
 already default in JDK 25.
 
@@ -248,7 +248,7 @@ Reduce TLB miss rate by mapping the heap with 2 MB pages instead of 4 KB.
 ### `-XX:+AlwaysPreTouch`
 
 Already enabled. Documented in
-[notes-perf-concepts.md](notes-perf-concepts.md).
+[concepts.md](../notes/perf-concepts.md).
 
 - **Verdict: already done.**
 
@@ -280,7 +280,7 @@ data.
 - **Cost**: serialization overhead per access; harder debugging; more native
   memory tracking concerns
 - **Verdict: skip.** Caffeine's GC pressure is already negligible
-  ([Run 3 H.4 GC analysis](LOAD-TEST-RESULTS-v2.md)). Solving a problem we
+  ([Run 3 H.4 GC analysis](../LOAD-TEST-RESULTS-v2.md)). Solving a problem we
   don't have.
 
 ### Compact strings (`-XX:+CompactStrings`)
@@ -427,7 +427,7 @@ HFT pattern. Spin instead of park when waiting briefly.
 
 ### Netty pooled direct buffers + `numDirectArenas`
 
-Already covered in [notes-perf-improvements.md §5](notes-perf-improvements.md).
+Already covered in [improvements.md §5](improvements.md).
 Two JVM flags, 3-8% throughput.
 
 - **Verdict: pursue.**
@@ -766,13 +766,13 @@ running on a sample.
 
 ## Prioritised cross-doc summary
 
-Combining this brainstorm with [notes-perf-improvements.md](notes-perf-improvements.md):
+Combining this brainstorm with [improvements.md](improvements.md):
 
 ### Tier 1 — definitely pursue (high ROI, low risk)
 
-1. **Lettuce sync → async API** ([improvements §1](notes-perf-improvements.md))
-2. **JVM heap 512 MB → 2 GB + ZGC tuning** ([improvements §2](notes-perf-improvements.md))
-3. **Netty pooled direct buffers + arenas** ([improvements §5](notes-perf-improvements.md))
+1. **Lettuce sync → async API** ([improvements §1](improvements.md))
+2. **JVM heap 512 MB → 2 GB + ZGC tuning** ([improvements §2](improvements.md))
+3. **Netty pooled direct buffers + arenas** ([improvements §5](improvements.md))
 4. **`-XX:+UseStringDeduplication`** (this doc §4) — free
 5. **JFR + async-profiler enabled** (this doc §13) — should be first work
 
@@ -780,7 +780,7 @@ Round 1 total effort: ~2 days. Expected: 5K → 25-30K RPS knee.
 
 ### Tier 2 — pursue if Tier 1 isn't enough
 
-6. **Async pipeline** ([improvements §3](notes-perf-improvements.md)) — needs OTel tracing first
+6. **Async pipeline** ([improvements §3](improvements.md)) — needs OTel tracing first
 7. **DSL-JSON replacing Jackson on the hot path** (this doc §2)
 8. **GraalVM JIT (HotSpot replacement)** (this doc §5) — JMH first
 9. **`@Contended` on hot atomic counters** (this doc §6)
@@ -790,7 +790,7 @@ Round 1 total effort: ~2 days. Expected: 5K → 25-30K RPS knee.
 
 ### Tier 3 — when ML scoring is in production
 
-13. **Vectorised / batched scorer** ([improvements §4](notes-perf-improvements.md))
+13. **Vectorised / batched scorer** ([improvements §4](improvements.md))
 14. **Out-of-process ML serving over gRPC** (this doc §12)
 
 ### Tier 4 — production-deploy time, not now

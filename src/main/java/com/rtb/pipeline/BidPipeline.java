@@ -91,4 +91,16 @@ public final class BidPipeline {
     public void release(BidContext ctx) {
         contextPool.release(ctx);
     }
+
+    /** Contexts currently parked in the pool (for metrics gauges). */
+    public int getContextPoolAvailable() {
+        return contextPool.poolSize();
+    }
+
+    /** Cumulative count of BidContext objects ever allocated (for metrics gauges).
+     *  Must plateau after warmup — otherwise the pool is undersized and the hot
+     *  path is allocating, defeating Phase 11's zero-allocation design. */
+    public int getContextPoolTotalCreated() {
+        return contextPool.totalCreated();
+    }
 }

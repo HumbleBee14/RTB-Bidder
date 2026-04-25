@@ -14,6 +14,7 @@ import com.rtb.health.CompositeHealthCheck;
 import com.rtb.health.KafkaHealthCheck;
 import com.rtb.health.RedisHealthCheck;
 import com.rtb.metrics.BidMetrics;
+import com.rtb.metrics.EventLoopLagProbe;
 import com.rtb.metrics.MetricsRegistry;
 import com.rtb.event.EventPublisher;
 import com.rtb.event.KafkaEventPublisher;
@@ -114,8 +115,13 @@ public final class Application {
         PipelineConfig pipelineConfig = PipelineConfig.from(config);
         RedisConfig redisConfig = RedisConfig.from(config);
 
+        // Metrics — created first so Redis client Timers and circuit breaker
+        // gauges can register against it during their construction.
+        MetricsRegistry metricsRegistry = new MetricsRegistry();
+
         // Repositories
-        RedisUserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(redisConfig);
+        RedisUserSegmentRepository userSegmentRepo = new RedisUserSegmentRepository(
+                redisConfig, metricsRegistry.registry());
         Runtime.getRuntime().addShutdownHook(new Thread(userSegmentRepo::close, "shutdown-redis"));
 
         CampaignRepository campaignRepo = createCampaignRepository(config, objectMapper);
@@ -125,11 +131,9 @@ public final class Application {
         if (scorer instanceof AutoCloseable closeableScorer) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeableScorer), "shutdown-scorer"));
         }
-        RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(redisConfig);
+        RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(
+                redisConfig, metricsRegistry.registry());
         Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
-
-        // Metrics (created early — circuit breakers register gauges)
-        MetricsRegistry metricsRegistry = new MetricsRegistry();
 
         // Resilience — separate circuit breakers for Redis and Kafka
         int redisFailures = config.getInt("resilience.redis.failure.threshold", 5);
@@ -165,6 +169,17 @@ public final class Application {
 
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig, bidMetrics);
 
+        // Pool saturation gauges — validate the Phase 11 zero-alloc claim at runtime.
+        // If bid_context_pool_allocated keeps climbing after warmup, the pool is
+        // undersized and we're allocating on the hot path (GC pressure returns).
+        // Note: avoid `_total` / `_created` suffixes — Micrometer's Prometheus
+        // exporter strips them (they're reserved for counter conventions), which
+        // silently renames the gauge and breaks dashboards/alerts.
+        metricsRegistry.registry().gauge("bid_context_pool_available",
+                pipeline, BidPipeline::getContextPoolAvailable);
+        metricsRegistry.registry().gauge("bid_context_pool_allocated",
+                pipeline, BidPipeline::getContextPoolTotalCreated);
+
         KafkaHealthCheck kafkaHealthCheck = new KafkaHealthCheck(config);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(kafkaHealthCheck), "shutdown-kafka-health"));
 
@@ -176,7 +191,8 @@ public final class Application {
         // Event publishing — Kafka async failures feed into circuit breaker
         CircuitBreaker kafkaCircuitBreaker = new CircuitBreaker("kafka-events", kafkaFailures, kafkaCooldown);
         kafkaCircuitBreaker.registerMetrics(metricsRegistry.registry());
-        EventPublisher rawEventPublisher = createEventPublisher(config, kafkaCircuitBreaker::recordExternalFailure);
+        EventPublisher rawEventPublisher = createEventPublisher(
+                config, kafkaCircuitBreaker::recordExternalFailure, metricsRegistry.registry());
         if (rawEventPublisher instanceof AutoCloseable closeablePublisher) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePublisher), "shutdown-events"));
         }
@@ -184,13 +200,19 @@ public final class Application {
 
         // Handlers — use resilient wrappers
         BidRequestHandler bidRequestHandler = new BidRequestHandler(pipeline, resilientRedis, eventPublisher, bidMetrics);
-        WinHandler winHandler = new WinHandler(objectMapper, eventPublisher);
-        TrackingHandler trackingHandler = new TrackingHandler(eventPublisher);
+        WinHandler winHandler = new WinHandler(objectMapper, eventPublisher, bidMetrics, campaignRepo);
+        TrackingHandler trackingHandler = new TrackingHandler(eventPublisher, bidMetrics);
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize,
                 metricsRegistry, healthCheck, objectMapper);
 
         // Start
         Vertx vertx = Vertx.vertx(new VertxOptions());
+
+        // Event-loop lag probe — the canonical Vert.x health signal
+        EventLoopLagProbe lagProbe = new EventLoopLagProbe(vertx, metricsRegistry.registry());
+        lagProbe.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(lagProbe::stop, "shutdown-lag-probe"));
+
         HttpServer httpServer = new HttpServer(vertx, bidRouter, port);
 
         httpServer.start()
@@ -267,11 +289,12 @@ public final class Application {
     }
 
     private static EventPublisher createEventPublisher(AppConfig config,
-                                                        java.util.function.Consumer<Exception> failureCallback) {
+                                                        java.util.function.Consumer<Exception> failureCallback,
+                                                        io.micrometer.core.instrument.MeterRegistry registry) {
         String type = config.get("events.type", "noop");
         logger.info("Event publisher: {}", type);
         return switch (type) {
-            case "kafka" -> new KafkaEventPublisher(config, failureCallback);
+            case "kafka" -> new KafkaEventPublisher(config, failureCallback, registry);
             default -> {
                 logger.info("Using NoOp event publisher (events logged at DEBUG level)");
                 yield new NoOpEventPublisher();

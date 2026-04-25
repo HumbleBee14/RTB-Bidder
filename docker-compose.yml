@@ -6,6 +6,20 @@ services:
     volumes:
       - redis-data:/data
 
+  # Exposes Redis server-side metrics (memory, clients, per-command latency,
+  # evictions, keyspace hits/misses) for Prometheus on port 9121.
+  # Without this, bidder-side latency is the only Redis signal — we can't tell
+  # "Redis is slow" from "the stage code around Redis is slow".
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0-alpine
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "9121:9121"
+    restart: unless-stopped
+    depends_on:
+      - redis
+
   kafka:
     image: apache/kafka:3.7.0
     ports:
@@ -24,6 +38,24 @@ services:
     volumes:
       - kafka-data:/var/lib/kafka/data
 
+  # Exposes Kafka broker-level metrics (topic lag, partition throughput,
+  # consumer group lag, broker-level offset gaps) for Prometheus on :9308.
+  # Kafka clients emit their own metrics (see KafkaClientMetrics binder on
+  # the bidder); this exporter gives the SERVER-side view so we can see
+  # when brokers themselves are slow/backlogged.
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    command:
+      - "--kafka.server=kafka:29092"
+    ports:
+      - "9308:9308"
+    # Kafka takes a few seconds to open its broker listener; depends_on only
+    # waits for the container to start, not for Kafka to be ready.
+    # restart:unless-stopped gives the exporter retry-until-success behaviour.
+    restart: unless-stopped
+    depends_on:
+      - kafka
+
   postgres:
     image: postgres:16-alpine
     ports:
@@ -35,6 +67,19 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # PostgreSQL server metrics (query rate, connections, locks, cache hit ratio,
+  # replication lag). Only relevant when CAMPAIGNS_SOURCE=postgres, but always
+  # running so panels populate immediately on switchover.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: "postgresql://rtb:rtb@postgres:5432/rtb?sslmode=disable"
+    ports:
+      - "9187:9187"
+    restart: unless-stopped
+    depends_on:
+      - postgres
 
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
@@ -56,6 +101,30 @@ services:
     security_opt:
       - seccomp:unconfined
 
+  # cAdvisor — per-container CPU / memory / network / disk IO for ALL
+  # containers in this compose (redis, kafka, postgres, clickhouse, prometheus,
+  # grafana, and the exporters). Fills the gap between "bidder JVM metrics"
+  # and "host metrics" — we see exactly what each dependency is consuming.
+  #
+  # ⚠ LOCAL DEV ONLY. This service runs with privileged: true and read-only
+  #   mounts of the host root, /sys, and the Docker socket. That is standard
+  #   for cAdvisor but is a high-privilege surface. Do NOT copy this config
+  #   to production compose files — use a restricted host-metrics collector
+  #   (node-exporter + a kubelet-integrated cAdvisor if on k8s) instead.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+
   prometheus:
     image: prom/prometheus:v2.53.0
     ports:
@@ -76,12 +145,26 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/rtb-bidder.json
+      # Image Renderer — enables "Export as PNG" on any panel and whole-dashboard PNG via API
+      GF_RENDERING_SERVER_URL: http://grafana-renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      GF_LOG_FILTERS: rendering:debug
     volumes:
       - grafana-data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
+      - grafana-renderer
+
+  # Headless Chrome renderer — lets Grafana export panels and dashboards as PNG.
+  # Used by: panel share menu → "Export as PNG", and the /render HTTP API.
+  grafana-renderer:
+    image: grafana/grafana-image-renderer:latest
+    ports:
+      - "8082:8081"
+    environment:
+      ENABLE_METRICS: "true"
 
 volumes:
   redis-data:

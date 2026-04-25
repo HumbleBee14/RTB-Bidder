@@ -11,3 +11,23 @@ scrape_configs:
       # Prometheus auto-adds instance=<host:port> — don't override it.
       # Add custom labels under a different name if needed (e.g., bidder_id).
       - targets: ['host.docker.internal:8080']
+
+  # Redis server-side metrics (memory, clients, per-command latency, evictions)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # Kafka broker-side metrics (topic lag, partition throughput, consumer lag)
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+
+  # PostgreSQL metrics (queries, connections, locks, cache hit ratio)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Per-container CPU, memory, network, disk IO for every running container
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']

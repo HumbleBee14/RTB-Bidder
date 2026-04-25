@@ -5,6 +5,8 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,8 +22,9 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
     private final RedisClient client;
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String> commands;
+    private final Timer smembersTimer;
 
-    public RedisUserSegmentRepository(RedisConfig config) {
+    public RedisUserSegmentRepository(RedisConfig config, MeterRegistry registry) {
         RedisURI uri = RedisURI.create(config.uri());
         uri.setTimeout(Duration.ofMillis(config.connectTimeoutMs()));
 
@@ -29,6 +32,12 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
         this.connection = client.connect();
         this.commands = connection.sync();
         connection.setTimeout(Duration.ofMillis(config.commandTimeoutMs()));
+
+        this.smembersTimer = Timer.builder("redis_client_command_duration_seconds")
+                .tag("command", "smembers")
+                .description("Lettuce client-observed Redis command latency")
+                .publishPercentiles(0.5, 0.9, 0.99, 0.999)
+                .register(registry);
 
         logger.info("Connected to Redis: {}:{}", uri.getHost(), uri.getPort());
     }
@@ -40,7 +49,7 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
     @Override
     public Set<String> getSegments(String userId) {
         String key = "user:" + userId + ":segments";
-        Set<String> segments = commands.smembers(key);
+        Set<String> segments = smembersTimer.record(() -> commands.smembers(key));
         return segments != null ? segments : Collections.emptySet();
     }
 

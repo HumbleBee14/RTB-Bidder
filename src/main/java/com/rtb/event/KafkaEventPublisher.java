@@ -8,6 +8,8 @@ import com.rtb.event.events.BidEvent;
 import com.rtb.event.events.ClickEvent;
 import com.rtb.event.events.ImpressionEvent;
 import com.rtb.event.events.WinEvent;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.binder.kafka.KafkaClientMetrics;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -38,8 +40,11 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
     private final String winTopic;
     private final String impressionTopic;
     private final String clickTopic;
+    private final KafkaClientMetrics kafkaClientMetrics;
 
-    public KafkaEventPublisher(AppConfig config, java.util.function.Consumer<Exception> failureCallback) {
+    public KafkaEventPublisher(AppConfig config,
+                               java.util.function.Consumer<Exception> failureCallback,
+                               MeterRegistry registry) {
         this.failureCallback = java.util.Objects.requireNonNull(failureCallback, "failureCallback");
         this.bidTopic = config.get("kafka.topic.bid-events", "bid-events");
         this.winTopic = config.get("kafka.topic.win-events", "win-events");
@@ -57,6 +62,12 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
         props.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5000);
 
         this.producer = new KafkaProducer<>(props);
+
+        // Expose producer client internals: send rate, batch size, record queue
+        // time, retries, topic-level throughput, etc. as Prometheus metrics.
+        this.kafkaClientMetrics = new KafkaClientMetrics(producer);
+        this.kafkaClientMetrics.bindTo(registry);
+
         this.objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -114,6 +125,7 @@ public final class KafkaEventPublisher implements EventPublisher, AutoCloseable 
     public void close() {
         executor.shutdown();
         producer.flush();
+        kafkaClientMetrics.close();
         producer.close();
         logger.info("KafkaEventPublisher closed");
     }

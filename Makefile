@@ -14,9 +14,8 @@ JVM_BASE := --sun-misc-unsafe-memory-access=allow \
             --enable-native-access=ALL-UNNAMED \
             -XX:+UseZGC
 
-# Production: fixed heap + generational ZGC + GC log
+# Production: fixed heap + generational ZGC (default since Java 24) + GC log
 JVM_PROD := $(JVM_BASE) \
-            -XX:+ZGenerational \
             -Xms512m -Xmx512m \
             -XX:+AlwaysPreTouch \
             -Xlog:gc*:file=results/gc.log:time,uptime,level,tags
@@ -29,8 +28,11 @@ JVM_LOAD := $(JVM_PROD) -Drtb.log.level=WARN
 .PHONY: setup
 setup: infra-up				## First-time setup: start all Docker services + seed Redis
 	@echo "Waiting for Redis to be ready..."
+	@# Use docker-compose ps -q redis — resolves the service name regardless of
+	@# container naming convention. 'docker ps -qf name=redis' ALSO matches
+	@# redis-exporter, causing docker exec to receive two IDs and silently fail.
 	@attempts=0; \
-	until docker exec $$(docker ps -qf name=redis) redis-cli ping 2>/dev/null | grep -q PONG; do \
+	until docker exec $$(docker-compose ps -q redis) redis-cli ping 2>/dev/null | grep -q PONG; do \
 		attempts=$$((attempts + 1)); \
 		if [ $$attempts -ge 60 ]; then \
 			echo ""; \
@@ -71,11 +73,13 @@ run-jar:				## Run existing JAR without rebuilding
 
 .PHONY: run-prod
 run-prod: build				## Build + run in production mode (Postgres campaigns + Kafka events)
+	@mkdir -p results
 	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
 	java $(JVM_PROD) -jar $(JAR)
 
 .PHONY: run-load
 run-load: build				## Build + run optimised for load testing (minimal logging)
+	@mkdir -p results
 	CONSOLE_ENABLED=false JSON_ENABLED=false \
 	java $(JVM_LOAD) -jar $(JAR)
 
@@ -113,7 +117,10 @@ infra-status:				## Show running container status
 
 .PHONY: seed-redis
 seed-redis:				## Seed Redis with 10K test users (run once after infra-up)
-	bash docker/init-redis.sh | docker exec -i $$(docker ps -qf name=redis) redis-cli
+	# docker-compose ps -q resolves the service name regardless of container naming
+	# convention (v1 uses _redis_1, v2 uses -redis-1). Matching via 'name=redis...'
+	# is fragile because 'redis-exporter' also contains 'redis'.
+	bash docker/init-redis.sh | docker exec -i $$(docker-compose ps -q redis) redis-cli
 
 # ── 6. Verify / test ──────────────────────────────────────────────────────────
 

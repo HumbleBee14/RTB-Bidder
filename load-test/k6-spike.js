@@ -21,14 +21,14 @@ export const options = {
             executor: 'ramping-arrival-rate',
             startRate: 50,
             timeUnit: '1s',
-            preAllocatedVUs: 100,
+            preAllocatedVUs: 1000,
             maxVUs: 2000,
             stages: [
-                { target: 50, duration: '1m' },       // baseline: 50 RPS steady (within capacity)
-                { target: 500, duration: '5s' },       // SPIKE: 10x in 5 seconds
-                { target: 500, duration: '30s' },      // hold spike — stress test
-                { target: 50, duration: '5s' },        // drop back to baseline
-                { target: 50, duration: '1m' },        // recovery — watch p99 settle
+                { target: 50,  duration: '30s' },      // baseline: 50 RPS steady
+                { target: 500, duration: '5s'  },      // SPIKE: 10x in 5 seconds
+                { target: 500, duration: '45s' },      // hold spike — stress test
+                { target: 50,  duration: '5s'  },      // drop back to baseline
+                { target: 50,  duration: '30s' },      // recovery — watch p99 settle
             ],
         },
     },

@@ -43,6 +43,7 @@ import com.rtb.scoring.MLScorer;
 import com.rtb.scoring.Scorer;
 import com.rtb.pipeline.stages.UserEnrichmentStage;
 import com.rtb.repository.CachedCampaignRepository;
+import com.rtb.repository.CachedUserSegmentRepository;
 import com.rtb.repository.CampaignRepository;
 import com.rtb.repository.JsonCampaignRepository;
 import com.rtb.repository.PostgresCampaignRepository;
@@ -124,6 +125,16 @@ public final class Application {
                 redisConfig, metricsRegistry.registry());
         Runtime.getRuntime().addShutdownHook(new Thread(userSegmentRepo::close, "shutdown-redis"));
 
+        // Local segment cache — wraps Redis repo.
+        // Cache hit: 0ms (in-process ConcurrentHashMap lookup).
+        // Cache miss: delegates to Redis SMEMBERS (~1ms), then populates cache.
+        // 500K entries @ ~100 bytes/entry ≈ 50MB heap. TTL=60s keeps segments fresh
+        // relative to batch segment-update jobs (which typically run every few minutes).
+        int segCacheSize = config.getInt("cache.user.segments.maxSize", 500_000);
+        long segCacheTtl  = config.getLong("cache.user.segments.ttlSeconds", 60);
+        CachedUserSegmentRepository cachedSegmentRepo = new CachedUserSegmentRepository(
+                userSegmentRepo, segCacheSize, segCacheTtl, metricsRegistry.registry());
+
         CampaignRepository campaignRepo = createCampaignRepository(config, objectMapper);
 
         TargetingEngine targetingEngine = createTargetingEngine(config);
@@ -142,7 +153,7 @@ public final class Application {
         long kafkaCooldown = config.getLong("resilience.kafka.cooldown.ms", 30000);
 
         ResilientRedis resilientRedis = new ResilientRedis(
-                userSegmentRepo, frequencyCapper, redisFailures, redisCooldown);
+                cachedSegmentRepo, frequencyCapper, redisFailures, redisCooldown);
         resilientRedis.getCircuitBreaker().registerMetrics(metricsRegistry.registry());
         logger.info("Circuit breakers: redis(failures={}, cooldown={}ms), kafka(failures={}, cooldown={}ms)",
                 redisFailures, redisCooldown, kafkaFailures, kafkaCooldown);

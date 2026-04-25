@@ -78,8 +78,15 @@ run-prod: build				## Build + run in production mode (Postgres campaigns + Kafka
 	java $(JVM_PROD) -jar $(JAR)
 
 .PHONY: run-load
-run-load: build				## Build + run optimised for load testing (minimal logging)
+run-load: build				## Build + run optimised for load testing (JSON campaigns, minimal logging)
 	@mkdir -p results
+	CONSOLE_ENABLED=false JSON_ENABLED=false \
+	java $(JVM_LOAD) -jar $(JAR)
+
+.PHONY: run-prod-load
+run-prod-load: build			## Build + run in full prod mode (Postgres + Kafka, minimal logging)
+	@mkdir -p results
+	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
 	CONSOLE_ENABLED=false JSON_ENABLED=false \
 	java $(JVM_LOAD) -jar $(JAR)
 
@@ -116,11 +123,20 @@ infra-status:				## Show running container status
 # ── 5. Seed data ──────────────────────────────────────────────────────────────
 
 .PHONY: seed-redis
-seed-redis:				## Seed Redis with 10K test users (run once after infra-up)
-	# docker-compose ps -q resolves the service name regardless of container naming
-	# convention (v1 uses _redis_1, v2 uses -redis-1). Matching via 'name=redis...'
-	# is fragile because 'redis-exporter' also contains 'redis'.
+seed-redis:				## Seed Redis with 10K dev users (quick, run after infra-up)
+	# docker-compose ps -q resolves by service name, not container name.
+	# 'docker ps -qf name=redis' also matches redis-exporter and fails silently.
 	bash docker/init-redis.sh | docker exec -i $$(docker-compose ps -q redis) redis-cli
+
+.PHONY: seed-redis-1m
+seed-redis-1m:				## Seed Redis with 1M users for performance testing (~60s)
+	@echo "Seeding 1M users into Redis via RESP pipe protocol..."
+	python3 docker/seed-redis-1m.py | docker exec -i $$(docker-compose ps -q redis) redis-cli --pipe
+	@echo "Done. Verify: make redis-count"
+
+.PHONY: redis-count
+redis-count:				## Show how many user-segment keys are currently in Redis
+	docker exec $$(docker-compose ps -q redis) redis-cli DBSIZE
 
 # ── 6. Verify / test ──────────────────────────────────────────────────────────
 
@@ -132,7 +148,7 @@ health:					## Check bidder health endpoint (bidder must be running)
 bid:					## Fire a sample bid request (bidder must be running)
 	curl -s -X POST http://localhost:8080/bid \
 	  -H "Content-Type: application/json" \
-	  -d '{"user_id":"user_00001","app":{"id":"a1","category":"sports","bundle":"com.sports.app"},"device":{"type":"mobile","os":"android","geo":"US"},"ad_slots":[{"id":"slot-1","sizes":["300x250"],"bid_floor":0.10}]}' \
+	  -d '{"user_id":"user_0000001","app":{"id":"a1","category":"sports","bundle":"com.sports.app"},"device":{"type":"mobile","os":"android","geo":"US"},"ad_slots":[{"id":"slot-1","sizes":["300x250"],"bid_floor":0.10}]}' \
 	  | jq .
 
 .PHONY: test

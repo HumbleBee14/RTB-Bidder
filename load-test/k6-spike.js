@@ -32,8 +32,19 @@ export const options = {
             ],
         },
     },
+    // Thresholds calibrated against Run 2 spike (p50≈1.3ms, p95≈2.4ms, max≈12ms,
+    // error=0%, bid≈83%). Spike transition adds the most tail variance so p99/max
+    // are looser than baseline but tighter than the v1 5%/10% guard rails.
     thresholds: {
-        error_rate: ['rate<0.10'],  // tolerate up to 10% errors during spike
+        http_req_duration: [
+            { threshold: 'p(50)<10',  abortOnFail: true },
+            { threshold: 'p(95)<20',  abortOnFail: true },
+            { threshold: 'p(99)<50',  abortOnFail: true },   // SLA boundary
+            { threshold: 'p(99.9)<100', abortOnFail: false },
+            { threshold: 'max<200',   abortOnFail: false },  // burst-transition outliers
+        ],
+        error_rate: [{ threshold: 'rate<0.01', abortOnFail: true }],  // <1% (was <10%)
+        bid_rate:   ['rate>0.75'],   // post-burst recovery floor
     },
 };
 

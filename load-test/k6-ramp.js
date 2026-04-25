@@ -37,8 +37,19 @@ export const options = {
             ],
         },
     },
+    // Thresholds calibrated against Run 2 ramp results (p50≈1ms, p95≈2.4ms, max≈24ms,
+    // error=0%, bid≈88%) with realistic margin for ramp transitions and queue spikes.
+    // p99/p99.9/max have looser bounds than baseline because ramp transitions
+    // briefly stress the queue; the percentiles below are still well within the 50ms SLA.
     thresholds: {
-        error_rate: ['rate<0.05'],
+        http_req_duration: [
+            { threshold: 'p(50)<10',  abortOnFail: true },
+            { threshold: 'p(95)<25',  abortOnFail: true },
+            { threshold: 'p(99)<50',  abortOnFail: true },   // SLA boundary
+            { threshold: 'p(99.9)<100', abortOnFail: false },
+        ],
+        error_rate: [{ threshold: 'rate<0.005', abortOnFail: true }], // <0.5%
+        bid_rate:   ['rate>0.80'],   // 80% floor — real catalog match under load
     },
 };
 

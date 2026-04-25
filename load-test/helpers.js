@@ -20,7 +20,11 @@ const APP_CATEGORIES = ['sports', 'news', 'tech', 'gaming', 'entertainment', 'fi
 const DEVICE_TYPES = ['mobile', 'tablet', 'desktop'];
 const DEVICE_OS = ['android', 'ios', 'windows'];
 const GEOS = ['US', 'UK', 'DE', 'JP', 'IN', 'BR', 'AU', 'CA'];
-const SLOT_SIZES = ['300x250', '728x90', '160x600', '320x50'];
+// Standard IAB display sizes — covers all 6 sizes our catalog supports.
+// 300x250 (medium rectangle) and 728x90 (leaderboard) dominate real RTB traffic
+// (~70% combined); 970x250 (billboard) and 300x600 (half-page) are common premium
+// inventory; 160x600 (skyscraper) and 320x50 (mobile banner) round out the mix.
+const SLOT_SIZES = ['300x250', '728x90', '160x600', '320x50', '970x250', '300x600'];
 
 export const BASE_URL = __ENV.TARGET_URL || 'http://localhost:8080';
 

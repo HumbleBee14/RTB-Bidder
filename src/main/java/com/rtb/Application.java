@@ -29,6 +29,7 @@ import com.rtb.pacing.HourlyPacedBudgetPacer;
 import com.rtb.pacing.LocalBudgetPacer;
 import com.rtb.pacing.QualityThrottledBudgetPacer;
 import com.rtb.pipeline.stages.BudgetPacingStage;
+import com.rtb.pipeline.stages.CandidateLimitStage;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
 import com.rtb.pipeline.stages.FrequencyCapStage;
 import com.rtb.pipeline.stages.RankingStage;
@@ -165,14 +166,21 @@ public final class Application {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePacer), "shutdown-pacer"));
         }
 
-        // Pipeline stages — 8 stages, executed in order
-        // resilientRedis wraps both userSegmentRepo AND frequencyCapper with one circuit breaker
-        // — if Redis is down, both segment lookup and freq capping degrade together
+        // Pipeline stages — executed in order.
+        // resilientRedis wraps both userSegmentRepo AND frequencyCapper with one circuit
+        // breaker — if Redis is down, both segment lookup and freq capping degrade together.
+        // CandidateLimitStage truncates after freq-cap so we score only the top N by
+        // value_per_click (default 0 = unlimited; see CandidateLimitStage javadoc for ranges).
+        int maxCandidates = config.getInt("pipeline.candidates.max", 0);
+        if (maxCandidates > 0) {
+            logger.info("Candidate limit: top {} by value_per_click before scoring", maxCandidates);
+        }
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
                 new UserEnrichmentStage(resilientRedis),       // segments via circuit breaker
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
                 new FrequencyCapStage(resilientRedis),          // freq cap via same circuit breaker
+                new CandidateLimitStage(maxCandidates),         // optional pre-scoring truncation
                 new ScoringStage(scorer),
                 new RankingStage(),
                 new BudgetPacingStage(budgetPacer),

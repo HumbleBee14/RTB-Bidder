@@ -145,12 +145,26 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/rtb-bidder.json
+      # Image Renderer — enables "Export as PNG" on any panel and whole-dashboard PNG via API
+      GF_RENDERING_SERVER_URL: http://grafana-renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      GF_LOG_FILTERS: rendering:debug
     volumes:
       - grafana-data:/var/lib/grafana
       - ./docker/grafana/provisioning:/etc/grafana/provisioning
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
+      - grafana-renderer
+
+  # Headless Chrome renderer — lets Grafana export panels and dashboards as PNG.
+  # Used by: panel share menu → "Export as PNG", and the /render HTTP API.
+  grafana-renderer:
+    image: grafana/grafana-image-renderer:latest
+    ports:
+      - "8082:8081"
+    environment:
+      ENABLE_METRICS: "true"
 
 volumes:
   redis-data:

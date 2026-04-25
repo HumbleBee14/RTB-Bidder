@@ -123,15 +123,11 @@ infra-status:				## Show running container status
 # ── 5. Seed data ──────────────────────────────────────────────────────────────
 
 .PHONY: seed-redis
-seed-redis:				## Seed Redis with 10K dev users (quick, run after infra-up)
+seed-redis:				## Seed Redis with 1M users (~3s via RESP pipe; only seed we need)
 	# docker-compose ps -q resolves by service name, not container name.
 	# 'docker ps -qf name=redis' also matches redis-exporter and fails silently.
-	bash docker/init-redis.sh | docker exec -i $$(docker-compose ps -q redis) redis-cli
-
-.PHONY: seed-redis-1m
-seed-redis-1m:				## Seed Redis with 1M users for performance testing (~60s)
 	@echo "Seeding 1M users into Redis via RESP pipe protocol..."
-	python3 docker/seed-redis-1m.py | docker exec -i $$(docker-compose ps -q redis) redis-cli --pipe
+	python3 docker/seed-redis.py | docker exec -i $$(docker-compose ps -q redis) redis-cli --pipe
 	@echo "Done. Verify: make redis-count"
 
 .PHONY: redis-count

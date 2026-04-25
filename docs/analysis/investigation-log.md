@@ -418,7 +418,17 @@ round-robin connections) revealed Redis CPU as the deeper limit.
 
 ### Fix — score-ordered paged freq-cap + read/write connection split
 
-Two surgical changes:
+**The core insight:** *don't ask Redis about campaigns you'd never pick anyway.*
+
+A bidder serves at most a handful of slot winners. Out of 278 candidates that
+matched targeting, the actual winner is almost always in the top-scoring
+~16. Checking freq caps for the remaining 262 lower-scored candidates is
+pure waste — those campaigns would lose ranking even if Redis allowed them.
+By scoring first and freq-capping in score-ordered pages until we have enough
+allowed candidates, we move from "ask Redis 278 questions per bid" to
+"ask Redis 16-32 questions per bid" with no loss in bid quality.
+
+Two surgical changes implement this:
 
 **1. Pipeline reorder: score before freq-cap**
 
@@ -457,12 +467,45 @@ p99 is 4-7ms over the 50ms SLA threshold — the remaining tail is from occasion
 multi-page freq-cap batches when many top candidates ARE capped. Next step is to
 investigate and tighten this.
 
+### What an EVAL is and why it backlogs (background note)
+
+The freq-cap pipeline does two Redis operations:
+
+- **MGET (read)** — on the hot path. Workers block on the response because the
+  bid pipeline can't proceed without knowing which campaigns are capped.
+- **EVAL (write)** — fire-and-forget after the bid is won. Runs the Lua script
+  `INCR freq:{user}:{campaign} + EXPIRE` to bump the impression counter. One
+  EVAL per winning bid.
+
+**Who the EVAL is for:** the *next* bid request for the same user. So that the
+next MGET sees count=1 instead of count=0 and we honour `maxImpressionsPerHour`.
+
+**Why fire-and-forget is correct in principle:** the HTTP response to the
+exchange has already been sent. The increment must complete before the next
+bid for that user, not before this response. So the worker submits and returns.
+
+**Why EVALs backlog under sustained load:**
+
+At 5K RPS × ~91% bid rate ≈ 4.5K EVALs/sec submitted. Each EVAL = one Redis
+round-trip + Lua execution on Redis's single thread. If submission rate ≥ drain
+rate, the queue grows. Nobody is waiting on the future, so there's no
+backpressure — the queue just keeps accepting until memory pushes back or
+Redis stalls. Under continuous load they DO drain, but slowly: new EVALs
+arrive as fast as old ones complete, so steady-state queue depth stays high.
+The queue only empties fully when traffic stops.
+
+**Why this matters here:** before the read/write connection split, that backlog
+sat on the same dispatcher thread as the MGET reads, so the next stress run's
+hot path inherited a dispatcher that was still chewing through the previous
+run's EVAL tail. That was the bistable collapse mechanism.
+
 ### Open question
 
 **Fire-and-forget write drain.** Even with separate write connections, under
 continuous benchmarking the write connection's nioEventLoop can still accumulate
-a backlog of queued EVALs between test runs. A production-grade fix would bound
-the post-response side effects (e.g., a bounded queue or batched write buffer)
+a backlog of queued EVALs between test runs (just doesn't pollute reads anymore).
+A production-grade fix would bound the post-response side effects (e.g., a
+bounded queue or batched write buffer that flushes every N EVALs or every M ms)
 rather than unbounded fire-and-forget per bid.
 
 ---

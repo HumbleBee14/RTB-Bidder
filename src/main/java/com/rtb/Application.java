@@ -206,7 +206,13 @@ public final class Application {
                 metricsRegistry, healthCheck, objectMapper);
 
         // Start
-        Vertx vertx = Vertx.vertx(new VertxOptions());
+        // Worker pool: pipeline.execute() runs here (blocking Redis I/O).
+        // 4 × cores gives enough concurrency without excessive context switching.
+        // Default Vert.x worker pool is 20, which saturates at ~20 concurrent pipeline calls.
+        int workerPoolSize = 4 * Runtime.getRuntime().availableProcessors();
+        Vertx vertx = Vertx.vertx(new VertxOptions().setWorkerPoolSize(workerPoolSize));
+        logger.info("Vert.x worker pool size: {} ({} available processors)", workerPoolSize,
+                Runtime.getRuntime().availableProcessors());
 
         // Event-loop lag probe — the canonical Vert.x health signal
         EventLoopLagProbe lagProbe = new EventLoopLagProbe(vertx, metricsRegistry.registry());

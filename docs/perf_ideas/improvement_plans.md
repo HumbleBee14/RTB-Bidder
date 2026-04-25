@@ -738,6 +738,86 @@ Before/after at the 5K stress level:
 
 ---
 
+## 6. Application-level backpressure / load shedding
+
+**Priority: high (production-readiness, not throughput). Effort: ~2-3 days.**
+
+### The problem this solves
+
+Discovered during the async-API investigation
+([investigation log entry 2026-04-25](../perf/investigation-log.md)):
+the bidder enters a **thrashing** state under sustained overload and **does
+not recover**. Once the worker pool / Lettuce dispatcher saturate at high
+RPS, the queue grows faster than it drains, every request times out at the
+50 ms SLA, and the system stays in this bad mode until the JVM restarts.
+
+The bidder currently has no application-level backpressure. It accepts
+every incoming request and trusts the SLA timeout to abort overruns. That
+works at low load. Under sustained overload it produces:
+
+- Queue grows unboundedly relative to drain rate
+- All worker threads parked waiting on the saturated downstream
+- Almost all requests TIMEOUT
+- System cannot self-recover even when load subsides briefly
+
+### What changes
+
+Add a short HTTP layer that sheds load when the bidder is overloaded.
+Several signals could drive shedding decisions:
+
+| Signal | Threshold (example) | Response |
+|---|---|---|
+| Vert.x worker pool queue depth | > 2× pool size | Return `429 Too Many Requests` |
+| Recent p99 latency (rolling 10s) | > 40 ms (i.e., approaching SLA) | Reduce admission rate |
+| BidContext pool exhaustion | pool empty + new allocation count climbing | Return `503 Service Unavailable` |
+| CPU load | > 90% sustained | Drop traffic at source |
+
+Implementation likely involves:
+
+- Adding a counter for "in-flight requests" in `BidRequestHandler`
+- Comparing against a configurable `INFLIGHT_HIGH_WATERMARK`
+- If exceeded: return 429 immediately without entering the pipeline
+- Decrement counter on response or on error
+
+### Why this matters specifically for our case
+
+In production RTB, exchanges respect HTTP 429 by routing to other bidder
+instances. A bidder that returns 429 quickly when overloaded is **healthier
+for the ecosystem** than one that accepts work and then fails the SLA — both
+result in no bid for that auction, but the 429 path doesn't burn bidder
+resources or pollute downstream caches.
+
+Even more importantly: 429 lets the bidder **recover**. A few seconds of
+shedding lets the queue drain, dispatcher catches up, system returns to
+healthy mode. Without shedding, the system stays thrashing forever.
+
+### Expected effect
+
+- **The bistable behaviour disappears.** Once load drops below the
+  watermark (or after some shed pressure), bidder returns to healthy state.
+- Maximum sustained throughput unchanged — backpressure doesn't add capacity.
+- p99 stays under SLA at any load (because anything above the watermark is
+  rejected, not accepted-then-failed).
+- 429 rate becomes a real production signal — it tells you "this instance is
+  near capacity, scale out."
+
+### Effort & risk
+
+| | |
+|---|---|
+| Code change | ~100-200 lines: counter + watermark check in BidRequestHandler + a metric |
+| Risk | Low — fails closed at the door, no impact on healthy paths |
+| Rollout | Single commit, controlled by env-var threshold (set high to disable in early rollout) |
+
+### Pre-requisite
+
+Identify the actual bottleneck first (Lettuce dispatcher per JFR analysis),
+because the watermark threshold should track that bottleneck — not be a
+random number. Backpressure tuned against the wrong signal is worse than no
+backpressure.
+
+---
+
 ## Things deliberately not on this list
 
 Improvements that sound good but aren't worth doing now, with reasons:

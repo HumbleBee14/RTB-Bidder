@@ -20,8 +20,11 @@ JVM_PROD := $(JVM_BASE) \
             -XX:+AlwaysPreTouch \
             -Xlog:gc*:file=results/gc.log:time,uptime,level,tags
 
-# Load-test: minimal logging so log I/O doesn't skew latency results
-JVM_LOAD := $(JVM_PROD) -Drtb.log.level=WARN
+# Load-test: minimal logging + Java Flight Recorder running continuously.
+# JFR overhead is ~1-2% with settings=profile; dump anytime with `make jfr-dump`.
+# maxage=15m caps the rolling buffer so we keep recent test data without unbounded growth.
+JVM_LOAD := $(JVM_PROD) -Drtb.log.level=WARN \
+            -XX:StartFlightRecording=settings=profile,name=bidder,maxage=15m,maxsize=512m,disk=true,dumponexit=true,filename=results/flight-exit.jfr
 
 # ── 1. First-time setup ───────────────────────────────────────────────────────
 
@@ -133,6 +136,36 @@ seed-redis:				## Seed Redis with 1M users (~3s via RESP pipe; only seed we need
 .PHONY: redis-count
 redis-count:				## Show how many user-segment keys are currently in Redis
 	docker exec $$(docker-compose ps -q redis) redis-cli DBSIZE
+
+.PHONY: jfr-dump
+jfr-dump:				## Snapshot the current JFR recording to results/flight-<timestamp>.jfr (bidder must be running)
+	@PID=$$(pgrep -f "rtb-bidder-1.0.0.jar" | head -1); \
+	if [ -z "$$PID" ]; then echo "ERROR: bidder not running"; exit 1; fi; \
+	TS=$$(date +%Y%m%d-%H%M%S); \
+	OUT=results/flight-$$TS.jfr; \
+	jcmd $$PID JFR.dump name=bidder filename=$$OUT > /dev/null && \
+	echo "✓ dumped to $$OUT ($$(du -h $$OUT | cut -f1))"; \
+	echo "open with: jmc $$OUT  (or convert to flame graph)"
+
+.PHONY: reset-state
+reset-state:				## Wipe Redis freq:* counters between stress runs (bidder must be stopped first; restart it manually after)
+	@echo "=== resetting Redis state for a clean stress run ==="
+	@CONTAINER=$$(docker-compose ps -q redis); \
+	if [ -z "$$CONTAINER" ]; then echo "ERROR: Redis container not running. 'make infra-up' first."; exit 1; fi; \
+	BEFORE_TOTAL=$$(docker exec $$CONTAINER redis-cli DBSIZE); \
+	BEFORE_FREQ=$$(docker exec $$CONTAINER redis-cli --scan --pattern 'freq:*' | wc -l | tr -d ' '); \
+	echo "before: $$BEFORE_TOTAL total keys, $$BEFORE_FREQ freq:* counters"; \
+	if [ "$$BEFORE_FREQ" != "0" ]; then \
+	  echo "wiping freq:* counters (xargs runs inside the container — fast)..."; \
+	  docker exec $$CONTAINER sh -c 'redis-cli --scan --pattern "freq:*" | xargs -r redis-cli DEL > /dev/null'; \
+	fi; \
+	AFTER_TOTAL=$$(docker exec $$CONTAINER redis-cli DBSIZE); \
+	AFTER_FREQ=$$(docker exec $$CONTAINER redis-cli --scan --pattern 'freq:*' | wc -l | tr -d ' '); \
+	echo "after:  $$AFTER_TOTAL total keys, $$AFTER_FREQ freq:* counters"; \
+	echo ""; \
+	echo "Redis state clean. User-segment data preserved ($$AFTER_TOTAL keys)."; \
+	echo "Now restart the bidder for a clean run:"; \
+	echo "  → Ctrl-C in the bidder terminal, then 'make run-prod-load'"
 
 # ── 6. Verify / test ──────────────────────────────────────────────────────────
 

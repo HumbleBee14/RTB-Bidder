@@ -6,7 +6,7 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
-import io.lettuce.core.api.sync.RedisCommands;
+import io.lettuce.core.api.async.RedisAsyncCommands;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
@@ -18,9 +18,18 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Redis-based frequency capping.
+ *
+ * Uses Lettuce's async API on a single shared connection. Worker threads block
+ * on returned futures via {@code .get(timeout)}, but multiple threads can have
+ * commands in flight on the same connection concurrently — lifting per-connection
+ * throughput from ~5K ops/s (sync API ceiling, our observed Run 3 knee) to
+ * ~100K ops/s (async + auto-flush). See docs/perf/improvements.md §1.
  *
  * Key:    freq:{userId}:{campaignId}
  * Value:  impression count (string-encoded integer, absent = 0 impressions)
@@ -43,7 +52,8 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
 
     private final RedisClient client;
     private final StatefulRedisConnection<String, String> connection;
-    private final RedisCommands<String, String> commands;
+    private final RedisAsyncCommands<String, String> commands;
+    private final long commandTimeoutMs;
     private final Timer getTimer;
     private final Timer mgetTimer;
     private final Timer evalTimer;
@@ -54,8 +64,9 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
 
         this.client = RedisClient.create(uri);
         this.connection = client.connect();
-        this.commands = connection.sync();
+        this.commands = connection.async();
         connection.setTimeout(Duration.ofMillis(config.commandTimeoutMs()));
+        this.commandTimeoutMs = config.commandTimeoutMs();
 
         this.getTimer = Timer.builder("redis_client_command_duration_seconds")
                 .tag("command", "get")
@@ -71,19 +82,29 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
                 .publishPercentiles(0.5, 0.9, 0.99, 0.999)
                 .register(registry);
 
-        logger.info("FrequencyCapper connected to Redis: {}:{}", uri.getHost(), uri.getPort());
+        logger.info("FrequencyCapper connected to Redis: {}:{} (async API)", uri.getHost(), uri.getPort());
     }
 
     @Override
     public boolean isAllowed(String userId, String campaignId, int maxImpressions) {
         String key = "freq:" + userId + ":" + campaignId;
-        String value = getTimer.record(() -> commands.get(key));
-        long count = value != null ? Long.parseLong(value) : 0;
-        return count < maxImpressions;
+        return getTimer.record(() -> {
+            try {
+                String value = commands.get(key).get(commandTimeoutMs, TimeUnit.MILLISECONDS);
+                long count = value != null ? Long.parseLong(value) : 0;
+                return count < maxImpressions;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return true;  // fail-open: allow bid if Redis lookup interrupted
+            } catch (ExecutionException | TimeoutException e) {
+                logger.warn("GET freq counter failed for {}/{}: {}", userId, campaignId, e.getMessage());
+                return true;  // fail-open: allow bid if freq lookup fails
+            }
+        });
     }
 
     /**
-     * MGET override — fetches impression counts for ALL candidate campaigns in one Redis call.
+     * MGET — fetches impression counts for ALL candidate campaigns in one Redis call.
      *
      * Old: 278 serial GETs × 0.1ms = 27.8ms per bid
      * New: 1 MGET (278 keys)       =  0.2ms per bid
@@ -107,8 +128,24 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
             keys[i] = "freq:" + userId + ":" + campaignIds.get(i);
         }
 
-        // ONE round-trip for all keys
-        List<KeyValue<String, String>> results = mgetTimer.record(() -> commands.mget(keys));
+        // ONE round-trip for all keys (async submit + block on future)
+        List<KeyValue<String, String>> results = mgetTimer.record(() -> {
+            try {
+                return commands.mget(keys).get(commandTimeoutMs, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return List.of();
+            } catch (ExecutionException | TimeoutException e) {
+                logger.warn("MGET freq counters failed for user {} ({} keys): {}",
+                        userId, keys.length, e.getMessage());
+                return List.of();
+            }
+        });
+
+        // On Redis failure (empty results), fail-open: allow all candidates rather than block bidding
+        if (results.isEmpty()) {
+            return new HashSet<>(campaignIds);
+        }
 
         Set<String> allowed = new HashSet<>();
         for (int i = 0; i < campaignIds.size(); i++) {
@@ -125,6 +162,8 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
     @Override
     public void recordImpression(String userId, String campaignId) {
         String key = "freq:" + userId + ":" + campaignId;
+        // Fire-and-forget: caller is post-response thread, doesn't need to wait.
+        // Async submit returns immediately; the EVAL completes on the Lettuce dispatcher.
         evalTimer.record(() -> commands.eval(INCR_WITH_EXPIRE_SCRIPT, ScriptOutputType.INTEGER,
                 new String[]{key}, String.valueOf(WINDOW_SECONDS)));
     }

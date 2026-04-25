@@ -186,6 +186,10 @@ test:					## Run unit tests
 
 # ── 7. Load testing ───────────────────────────────────────────────────────────
 
+.PHONY: pre-warm
+pre-warm:				## Prime the Caffeine segment cache — 500 RPS for 5 min before any stress test
+	k6 run load-test/k6-prewarm.js
+
 .PHONY: load-test-baseline
 load-test-baseline:			## k6 baseline — 100 RPS constant for 2 min (sanity)
 	k6 run load-test/k6-baseline.js

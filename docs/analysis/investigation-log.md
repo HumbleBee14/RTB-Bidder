@@ -345,33 +345,126 @@ There are ~80+ threads shown. In a healthy system you'd see most worker threads 
 
 ---
 
-### Next planned action
+### Root cause (summary)
 
-**Implement Lettuce connection pool** (4–8 connections via Apache Commons
-Pool 2). Each pooled connection has its own dispatcher thread, distributing
-the response-decoding work across multiple threads.
+**Culprit: single Lettuce `nioEventLoop` thread per shared connection.**
 
-Expected effect:
-- Dispatcher CPU saturation removed (4× the parallelism)
-- p99 should drop closer to where Run 1 landed (~33 ms)
-- Bistable behaviour should disappear because dispatcher can keep up
-- New bottleneck will surface — could be GC, scoring, or somewhere else
+Lettuce's design: one connection = one thread decodes all responses. At
+5K RPS × 280 keys per MGET = **1.4 million key-value pairs/sec** through
+that one thread. It saturates. JFR confirmed: `lettuce-nioEventLoop-7-1`
+consumed 72% of all CPU samples, doing nothing but `String.charAt` RESP
+parsing and `HashMap.getNode` response assembly.
 
-The connection-pool fix is in [improvements.md](../perf_ideas/improvement_plans.md) Tier 1
-already, but I had previously deprioritised it after reading Lettuce's
-"don't pool" docs. The profile data overrides that — for this workload
-shape, pooling is the right answer.
+Once the decoder falls behind, worker threads time out on `.get(50ms)`,
+but the decoder still processes abandoned futures — more work, no
+consumer. Queue grows faster than it drains. **System enters bistable
+collapse and cannot self-recover at sustained load.**
 
-### Open question (note for later)
+First run fine (fresh start, no backlog). Second run collapses immediately
+(backlog from run 1 + instant 5K RPS = decoder never catches up).
 
-**Backpressure / load-shedding.** Even after fixing the dispatcher, the
-bidder still has no application-level backpressure: under any future
-overload it will accept work faster than it can handle and re-enter
-thrashing. Production-grade fix is to refuse with HTTP 429 when the
-worker-pool queue depth exceeds a threshold, instead of accepting and
-silently failing the SLA. **This is a separate improvement but related to
-the bistability we observed here.** Add to improvements.md as a future item.
+### Proposed fix
+
+**Lettuce connection pool — 4 connections → 4 dispatcher threads.**
+
+Each pooled connection has its own `nioEventLoop` thread. Decode work is
+spread across 4 threads instead of 1. Dispatcher CPU per thread drops
+from ~72% to ~18%. Bistable collapse should disappear.
+
+Using Lettuce's built-in `ConnectionPoolSupport` (no external pool
+library needed). Each command borrows a connection, issues the command,
+returns the connection.
+
+Expected outcome:
+- p99 returns to ~33 ms (where the first clean run landed)
+- No bistable collapse across consecutive stress runs
+- New bottleneck will surface elsewhere (TBD)
+
+### Result — connection pool attempt (failed)
+
+Attempted `GenericObjectPool` (commons-pool2) first. `pool.borrowObject()` under
+72 worker threads + 4 connections created a borrow queue: workers waited 50+ ms
+just to acquire a connection before the Redis command even started. `getSegments()`
+timed out, returned empty set → 92% no-bid rate. Pool is the wrong tool for this
+pattern; borrow/return overhead dominates at this concurrency level.
+
+### Result — round-robin connection array (partial fix)
+
+Replaced pool with a round-robin array: `AtomicInteger % N` gives zero-contention
+connection selection. 4 connections = 4 `nioEventLoop` decoder threads. JFR
+confirmed decode load spread across `lettuce-nioEventLoop-7-{1..4}` (each ~700
+CPU samples vs. single-thread's 846).
+
+However, p50 remained at 57ms and p99 at 81ms. Two remaining bottlenecks
+identified via JFR:
+
+1. **SMEMBERS volume**: With 1M users sampled uniformly and a 500K-entry Caffeine
+   cache, warmup (30s × 5K RPS = 150K requests) covers only ~127K unique users
+   (12.7% cache hit rate). 87% of requests still hit Redis for SMEMBERS, doubling
+   Redis command volume alongside MGET.
+
+2. **MGET size**: FrequencyCapStage was issuing one MGET of ~278 keys per request
+   (all segment-matched campaigns). At 5K RPS that's 1.4M key-value pairs/sec
+   through Redis's single-threaded CPU — the real ceiling.
+
+### Root cause (final)
+
+The MGET of all matched candidates was the core problem. Combining it with cold
+Caffeine (forcing SMEMBERS on 87% of requests) put Redis's single processing thread
+over its CPU budget. The bistable collapse was a symptom of that saturation.
+
+The Lettuce decoder was a co-bottleneck but not the primary one — fixing it (via
+round-robin connections) revealed Redis CPU as the deeper limit.
+
+### Fix — score-ordered paged freq-cap + read/write connection split
+
+Two surgical changes:
+
+**1. Pipeline reorder: score before freq-cap**
+
+Old: retrieve → freq-cap (MGET 278 keys) → score → rank
+
+New: retrieve → score → freq-cap (MGET 16 keys at a time) → rank
+
+`FrequencyCapStage` now sorts candidates by score descending, then pages through
+them in batches of `batchSize=16`, issuing one MGET per page until
+`keepTopAllowed=64` allowed candidates are found. In the common case (few or no
+campaigns freq-capped), the first page of 16 returns 16 allowed candidates and the
+loop stops. Result: **1 MGET of 16 keys instead of 1 MGET of 278 keys — 17×
+reduction in Redis work per request.**
+
+**2. Read/write connection split in `RedisFrequencyCapper`**
+
+`recordImpression` fire-and-forget EVALs now go to a dedicated write connection
+array. MGET reads use a separate read connection array. Post-response write backlogs
+from one stress run can no longer pollute read latency into the next run — which
+was causing the bistable collapse symptom to persist across consecutive tests.
+
+### Verified results
+
+Three back-to-back runs on the same JVM process, no restart between runs:
+
+| Run | p50 | p95 | p99 | p99.9 | bid_rate |
+|---|---|---|---|---|---|
+| 1 | 2.34 ms ✓ | 35.87 ms ✓ | 54.51 ms ✗ | 67.85 ms ✓ | 90.87% ✓ |
+| 2 | 2.29 ms ✓ | 28.83 ms ✓ | 57.10 ms ✗ | 80.49 ms ✓ | 90.67% ✓ |
+| 3 | 2.92 ms ✓ | 39.48 ms ✓ | 54.79 ms ✗ | 73.18 ms ✓ | 90.97% ✓ |
+
+**Bistable collapse is gone.** Consecutive runs are stable and deterministic.
+p50 dropped from 57ms → 2.3ms. Bid rate stable at ~91%.
+
+p99 is 4-7ms over the 50ms SLA threshold — the remaining tail is from occasional
+multi-page freq-cap batches when many top candidates ARE capped. Next step is to
+investigate and tighten this.
+
+### Open question
+
+**Fire-and-forget write drain.** Even with separate write connections, under
+continuous benchmarking the write connection's nioEventLoop can still accumulate
+a backlog of queued EVALs between test runs. A production-grade fix would bound
+the post-response side effects (e.g., a bounded queue or batched write buffer)
+rather than unbounded fire-and-forget per bid.
 
 ---
 
-## (next entry — to be added after the connection pool change is implemented and tested)
+## (next entry — p99 tail investigation at 5K RPS)

@@ -21,52 +21,65 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Redis-based frequency capping.
+ * Redis-based frequency capping using a round-robin connection array.
  *
- * Uses Lettuce's async API on a single shared connection. Worker threads block
- * on returned futures via {@code .get(timeout)}, but multiple threads can have
- * commands in flight on the same connection concurrently — lifting per-connection
- * throughput from ~5K ops/s (sync API ceiling, our observed Run 3 knee) to
- * ~100K ops/s (async + auto-flush). See docs/perf/improvements.md §1.
+ * Why a connection array instead of a pool:
+ *   A GenericObjectPool requires borrow/return on every command. Under 5K RPS
+ *   with 72 worker threads and only 4 connections, threads queue at borrowObject()
+ *   — adding 50+ ms of wait before the Redis command even starts.
+ *
+ *   A round-robin array (counter % N) has zero lock contention: each thread picks
+ *   a connection index atomically, issues the command async, and moves on. All N
+ *   connections are permanently open, giving N independent nioEventLoop decoder
+ *   threads to share the decoding load.
+ *
+ *   This is the standard pattern Lettuce recommends for high-throughput workloads
+ *   when multiple decoder threads are needed without pool overhead.
  *
  * Key:    freq:{userId}:{campaignId}
  * Value:  impression count (string-encoded integer, absent = 0 impressions)
  * TTL:    1 hour sliding window
- *
- * isAllowed()          — single GET, used when only one campaign is being checked
- * allowedCampaignIds() — MGET for all candidates in ONE round-trip (Phase 17 Slice 5)
- * recordImpression()   — Lua script: atomic INCR + EXPIRE in one round-trip
  */
 public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(RedisFrequencyCapper.class);
     private static final long WINDOW_SECONDS = 3600;
 
-    // Atomic INCR + set TTL only on first impression (count == 1 means key was just created)
     private static final String INCR_WITH_EXPIRE_SCRIPT =
             "local count = redis.call('INCR', KEYS[1]) " +
             "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end " +
             "return count";
 
     private final RedisClient client;
-    private final StatefulRedisConnection<String, String> connection;
-    private final RedisAsyncCommands<String, String> commands;
+    private final StatefulRedisConnection<String, String>[] readConnections;
+    private final StatefulRedisConnection<String, String>[] writeConnections;
+    private final AtomicInteger readRoundRobin = new AtomicInteger();
+    private final AtomicInteger writeRoundRobin = new AtomicInteger();
     private final long commandTimeoutMs;
     private final Timer getTimer;
     private final Timer mgetTimer;
     private final Timer evalTimer;
 
+    @SuppressWarnings("unchecked")
     public RedisFrequencyCapper(RedisConfig config, MeterRegistry registry) {
         RedisURI uri = RedisURI.create(config.uri());
         uri.setTimeout(Duration.ofMillis(config.connectTimeoutMs()));
 
         this.client = RedisClient.create(uri);
-        this.connection = client.connect();
-        this.commands = connection.async();
-        connection.setTimeout(Duration.ofMillis(config.commandTimeoutMs()));
         this.commandTimeoutMs = config.commandTimeoutMs();
+
+        int n = config.poolSize();
+        this.readConnections = new StatefulRedisConnection[n];
+        this.writeConnections = new StatefulRedisConnection[n];
+        for (int i = 0; i < n; i++) {
+            readConnections[i] = client.connect();
+            readConnections[i].setTimeout(Duration.ofMillis(commandTimeoutMs));
+            writeConnections[i] = client.connect();
+            writeConnections[i].setTimeout(Duration.ofMillis(commandTimeoutMs));
+        }
 
         this.getTimer = Timer.builder("redis_client_command_duration_seconds")
                 .tag("command", "get")
@@ -82,7 +95,18 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
                 .publishPercentiles(0.5, 0.9, 0.99, 0.999)
                 .register(registry);
 
-        logger.info("FrequencyCapper connected to Redis: {}:{} (async API)", uri.getHost(), uri.getPort());
+        logger.info("FrequencyCapper connected to Redis: {}:{} ({} read + {} write connections)",
+                uri.getHost(), uri.getPort(), n, n);
+    }
+
+    private RedisAsyncCommands<String, String> nextReadCommands() {
+        int idx = Math.abs(readRoundRobin.getAndIncrement() % readConnections.length);
+        return readConnections[idx].async();
+    }
+
+    private RedisAsyncCommands<String, String> nextWriteCommands() {
+        int idx = Math.abs(writeRoundRobin.getAndIncrement() % writeConnections.length);
+        return writeConnections[idx].async();
     }
 
     @Override
@@ -90,59 +114,43 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
         String key = "freq:" + userId + ":" + campaignId;
         return getTimer.record(() -> {
             try {
-                String value = commands.get(key).get(commandTimeoutMs, TimeUnit.MILLISECONDS);
+                String value = nextReadCommands().get(key).get(commandTimeoutMs, TimeUnit.MILLISECONDS);
                 long count = value != null ? Long.parseLong(value) : 0;
                 return count < maxImpressions;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return true;  // fail-open: allow bid if Redis lookup interrupted
+                return true;
             } catch (ExecutionException | TimeoutException e) {
                 logger.warn("GET freq counter failed for {}/{}: {}", userId, campaignId, e.getMessage());
-                return true;  // fail-open: allow bid if freq lookup fails
+                return true;
             }
         });
     }
 
-    /**
-     * MGET — fetches impression counts for ALL candidate campaigns in one Redis call.
-     *
-     * Old: 278 serial GETs × 0.1ms = 27.8ms per bid
-     * New: 1 MGET (278 keys)       =  0.2ms per bid
-     *
-     * How MGET works:
-     *   Instead of asking Redis 278 separate questions, we send one message with all 278
-     *   key names. Redis looks them all up in its hash table, packs the values into one
-     *   response, and sends it back. One network round-trip regardless of key count.
-     *   Non-existent keys return null (= 0 impressions = user has not seen this campaign).
-     */
     @Override
     public Set<String> allowedCampaignIds(String userId, Map<String, Integer> campaignMaxImpressions) {
         if (campaignMaxImpressions.isEmpty()) {
             return Set.of();
         }
 
-        // Preserve insertion order so position i in keys matches position i in mget result
         List<String> campaignIds = new ArrayList<>(campaignMaxImpressions.keySet());
         String[] keys = new String[campaignIds.size()];
         for (int i = 0; i < campaignIds.size(); i++) {
             keys[i] = "freq:" + userId + ":" + campaignIds.get(i);
         }
 
-        // ONE round-trip for all keys (async submit + block on future)
         List<KeyValue<String, String>> results = mgetTimer.record(() -> {
             try {
-                return commands.mget(keys).get(commandTimeoutMs, TimeUnit.MILLISECONDS);
+                return nextReadCommands().mget(keys).get(commandTimeoutMs, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return List.of();
             } catch (ExecutionException | TimeoutException e) {
-                logger.warn("MGET freq counters failed for user {} ({} keys): {}",
-                        userId, keys.length, e.getMessage());
+                logger.warn("MGET freq counters failed for user {} ({} keys): {}", userId, keys.length, e.getMessage());
                 return List.of();
             }
         });
 
-        // On Redis failure (empty results), fail-open: allow all candidates rather than block bidding
         if (results.isEmpty()) {
             return new HashSet<>(campaignIds);
         }
@@ -162,15 +170,18 @@ public final class RedisFrequencyCapper implements FrequencyCapper, AutoCloseabl
     @Override
     public void recordImpression(String userId, String campaignId) {
         String key = "freq:" + userId + ":" + campaignId;
-        // Fire-and-forget: caller is post-response thread, doesn't need to wait.
-        // Async submit returns immediately; the EVAL completes on the Lettuce dispatcher.
-        evalTimer.record(() -> commands.eval(INCR_WITH_EXPIRE_SCRIPT, ScriptOutputType.INTEGER,
+        evalTimer.record(() -> nextWriteCommands().eval(INCR_WITH_EXPIRE_SCRIPT, ScriptOutputType.INTEGER,
                 new String[]{key}, String.valueOf(WINDOW_SECONDS)));
     }
 
     @Override
     public void close() {
-        connection.close();
+        for (StatefulRedisConnection<String, String> conn : readConnections) {
+            conn.close();
+        }
+        for (StatefulRedisConnection<String, String> conn : writeConnections) {
+            conn.close();
+        }
         client.shutdown();
     }
 }

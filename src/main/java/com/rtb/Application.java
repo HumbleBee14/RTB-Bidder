@@ -29,6 +29,7 @@ import com.rtb.pacing.HourlyPacedBudgetPacer;
 import com.rtb.pacing.LocalBudgetPacer;
 import com.rtb.pacing.QualityThrottledBudgetPacer;
 import com.rtb.pipeline.stages.BudgetPacingStage;
+import com.rtb.pipeline.stages.CandidateLimitStage;
 import com.rtb.pipeline.stages.CandidateRetrievalStage;
 import com.rtb.pipeline.stages.FrequencyCapStage;
 import com.rtb.pipeline.stages.RankingStage;
@@ -43,19 +44,22 @@ import com.rtb.scoring.MLScorer;
 import com.rtb.scoring.Scorer;
 import com.rtb.pipeline.stages.UserEnrichmentStage;
 import com.rtb.repository.CachedCampaignRepository;
+import com.rtb.repository.CachedUserSegmentRepository;
 import com.rtb.repository.CampaignRepository;
 import com.rtb.repository.JsonCampaignRepository;
 import com.rtb.repository.PostgresCampaignRepository;
 import com.rtb.repository.RedisUserSegmentRepository;
 import com.rtb.server.BidRequestHandler;
 import com.rtb.server.BidRouter;
-import com.rtb.server.HttpServer;
 import com.rtb.server.TrackingHandler;
 import com.rtb.server.WinHandler;
 import com.rtb.targeting.EmbeddingTargetingEngine;
 import com.rtb.targeting.HybridTargetingEngine;
 import com.rtb.targeting.SegmentTargetingEngine;
 import com.rtb.targeting.TargetingEngine;
+import io.vertx.core.AbstractVerticle;
+import io.vertx.core.DeploymentOptions;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import org.slf4j.Logger;
@@ -124,6 +128,16 @@ public final class Application {
                 redisConfig, metricsRegistry.registry());
         Runtime.getRuntime().addShutdownHook(new Thread(userSegmentRepo::close, "shutdown-redis"));
 
+        // Local segment cache — wraps Redis repo.
+        // Cache hit: 0ms (in-process ConcurrentHashMap lookup).
+        // Cache miss: delegates to Redis SMEMBERS (~1ms), then populates cache.
+        // 500K entries @ ~100 bytes/entry ≈ 50MB heap. TTL=60s keeps segments fresh
+        // relative to batch segment-update jobs (which typically run every few minutes).
+        int segCacheSize = config.getInt("cache.user.segments.maxSize", 500_000);
+        long segCacheTtl  = config.getLong("cache.user.segments.ttlSeconds", 60);
+        CachedUserSegmentRepository cachedSegmentRepo = new CachedUserSegmentRepository(
+                userSegmentRepo, segCacheSize, segCacheTtl, metricsRegistry.registry());
+
         CampaignRepository campaignRepo = createCampaignRepository(config, objectMapper);
 
         TargetingEngine targetingEngine = createTargetingEngine(config);
@@ -142,7 +156,7 @@ public final class Application {
         long kafkaCooldown = config.getLong("resilience.kafka.cooldown.ms", 30000);
 
         ResilientRedis resilientRedis = new ResilientRedis(
-                userSegmentRepo, frequencyCapper, redisFailures, redisCooldown);
+                cachedSegmentRepo, frequencyCapper, redisFailures, redisCooldown);
         resilientRedis.getCircuitBreaker().registerMetrics(metricsRegistry.registry());
         logger.info("Circuit breakers: redis(failures={}, cooldown={}ms), kafka(failures={}, cooldown={}ms)",
                 redisFailures, redisCooldown, kafkaFailures, kafkaCooldown);
@@ -152,14 +166,21 @@ public final class Application {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeablePacer), "shutdown-pacer"));
         }
 
-        // Pipeline stages — 8 stages, executed in order
-        // resilientRedis wraps both userSegmentRepo AND frequencyCapper with one circuit breaker
-        // — if Redis is down, both segment lookup and freq capping degrade together
+        // Pipeline stages — executed in order.
+        // resilientRedis wraps both userSegmentRepo AND frequencyCapper with one circuit
+        // breaker — if Redis is down, both segment lookup and freq capping degrade together.
+        // CandidateLimitStage truncates after freq-cap so we score only the top N by
+        // value_per_click (default 0 = unlimited; see CandidateLimitStage javadoc for ranges).
+        int maxCandidates = config.getInt("pipeline.candidates.max", 0);
+        if (maxCandidates > 0) {
+            logger.info("Candidate limit: top {} by value_per_click before scoring", maxCandidates);
+        }
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
                 new UserEnrichmentStage(resilientRedis),       // segments via circuit breaker
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
                 new FrequencyCapStage(resilientRedis),          // freq cap via same circuit breaker
+                new CandidateLimitStage(maxCandidates),         // optional pre-scoring truncation
                 new ScoringStage(scorer),
                 new RankingStage(),
                 new BudgetPacingStage(budgetPacer),
@@ -206,18 +227,40 @@ public final class Application {
                 metricsRegistry, healthCheck, objectMapper);
 
         // Start
-        Vertx vertx = Vertx.vertx(new VertxOptions());
+        // Worker pool: pipeline.execute() runs here (blocking Redis I/O).
+        // 4 × cores gives enough concurrency without excessive context switching.
+        // Default Vert.x worker pool is 20, which saturates at ~20 concurrent pipeline calls.
+        int workerPoolSize = 4 * Runtime.getRuntime().availableProcessors();
+        Vertx vertx = Vertx.vertx(new VertxOptions().setWorkerPoolSize(workerPoolSize));
+        logger.info("Vert.x worker pool size: {} ({} available processors)", workerPoolSize,
+                Runtime.getRuntime().availableProcessors());
 
         // Event-loop lag probe — the canonical Vert.x health signal
         EventLoopLagProbe lagProbe = new EventLoopLagProbe(vertx, metricsRegistry.registry());
         lagProbe.start();
         Runtime.getRuntime().addShutdownHook(new Thread(lagProbe::stop, "shutdown-lag-probe"));
 
-        HttpServer httpServer = new HttpServer(vertx, bidRouter, port);
+        // Deploy one Verticle instance per CPU core.
+        // Each instance gets its own Netty NIO event-loop thread and its own router.
+        // All dependencies (pipeline, repos, metrics) are shared and thread-safe.
+        // Vert.x enables SO_REUSEPORT automatically so all instances listen on the same
+        // port and the OS load-balances connections across event-loop threads.
+        int eventLoopInstances = Runtime.getRuntime().availableProcessors();
+        logger.info("Deploying {} event-loop verticle instances (one per core)", eventLoopInstances);
 
-        httpServer.start()
-                .onSuccess(server -> logger.info("RTB Bidder started on port {} | SLA: {}ms | stages: {}",
-                        server.actualPort(), pipelineConfig.maxLatencyMs(), stages.size()))
+        vertx.deployVerticle(() -> new AbstractVerticle() {
+            @Override
+            public void start(Promise<Void> startPromise) {
+                vertx.createHttpServer()
+                        .requestHandler(bidRouter.createRouter(vertx))
+                        .listen(port)
+                        .onSuccess(s -> startPromise.complete())
+                        .onFailure(startPromise::fail);
+            }
+        }, new DeploymentOptions().setInstances(eventLoopInstances))
+                .onSuccess(id -> logger.info(
+                        "RTB Bidder started on port {} | {} event-loop threads | {} worker threads | SLA: {}ms | stages: {}",
+                        port, eventLoopInstances, workerPoolSize, pipelineConfig.maxLatencyMs(), stages.size()))
                 .onFailure(err -> {
                     logger.error("Failed to start HTTP server", err);
                     System.err.println();

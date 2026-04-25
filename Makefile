@@ -78,8 +78,15 @@ run-prod: build				## Build + run in production mode (Postgres campaigns + Kafka
 	java $(JVM_PROD) -jar $(JAR)
 
 .PHONY: run-load
-run-load: build				## Build + run optimised for load testing (minimal logging)
+run-load: build				## Build + run optimised for load testing (JSON campaigns, minimal logging)
 	@mkdir -p results
+	CONSOLE_ENABLED=false JSON_ENABLED=false \
+	java $(JVM_LOAD) -jar $(JAR)
+
+.PHONY: run-prod-load
+run-prod-load: build			## Build + run in full prod mode (Postgres + Kafka, minimal logging)
+	@mkdir -p results
+	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
 	CONSOLE_ENABLED=false JSON_ENABLED=false \
 	java $(JVM_LOAD) -jar $(JAR)
 
@@ -116,11 +123,16 @@ infra-status:				## Show running container status
 # ── 5. Seed data ──────────────────────────────────────────────────────────────
 
 .PHONY: seed-redis
-seed-redis:				## Seed Redis with 10K test users (run once after infra-up)
-	# docker-compose ps -q resolves the service name regardless of container naming
-	# convention (v1 uses _redis_1, v2 uses -redis-1). Matching via 'name=redis...'
-	# is fragile because 'redis-exporter' also contains 'redis'.
-	bash docker/init-redis.sh | docker exec -i $$(docker-compose ps -q redis) redis-cli
+seed-redis:				## Seed Redis with 1M users (~3s via RESP pipe; only seed we need)
+	# docker-compose ps -q resolves by service name, not container name.
+	# 'docker ps -qf name=redis' also matches redis-exporter and fails silently.
+	@echo "Seeding 1M users into Redis via RESP pipe protocol..."
+	python3 docker/seed-redis.py | docker exec -i $$(docker-compose ps -q redis) redis-cli --pipe
+	@echo "Done. Verify: make redis-count"
+
+.PHONY: redis-count
+redis-count:				## Show how many user-segment keys are currently in Redis
+	docker exec $$(docker-compose ps -q redis) redis-cli DBSIZE
 
 # ── 6. Verify / test ──────────────────────────────────────────────────────────
 
@@ -132,7 +144,7 @@ health:					## Check bidder health endpoint (bidder must be running)
 bid:					## Fire a sample bid request (bidder must be running)
 	curl -s -X POST http://localhost:8080/bid \
 	  -H "Content-Type: application/json" \
-	  -d '{"user_id":"user_00001","app":{"id":"a1","category":"sports","bundle":"com.sports.app"},"device":{"type":"mobile","os":"android","geo":"US"},"ad_slots":[{"id":"slot-1","sizes":["300x250"],"bid_floor":0.10}]}' \
+	  -d '{"user_id":"user_0000001","app":{"id":"a1","category":"sports","bundle":"com.sports.app"},"device":{"type":"mobile","os":"android","geo":"US"},"ad_slots":[{"id":"slot-1","sizes":["300x250"],"bid_floor":0.10}]}' \
 	  | jq .
 
 .PHONY: test
@@ -142,16 +154,54 @@ test:					## Run unit tests
 # ── 7. Load testing ───────────────────────────────────────────────────────────
 
 .PHONY: load-test-baseline
-load-test-baseline:			## k6 baseline load test — 100 RPS constant for 2 min
+load-test-baseline:			## k6 baseline — 100 RPS constant for 2 min (sanity)
 	k6 run load-test/k6-baseline.js
 
 .PHONY: load-test-ramp
-load-test-ramp:				## k6 ramp test — 50 → 1000 RPS over 4 min
+load-test-ramp:				## k6 ramp test — 50 → 5000 RPS over ~6 min (find knee)
 	k6 run load-test/k6-ramp.js
 
 .PHONY: load-test-spike
-load-test-spike:			## k6 spike test — sudden burst to 500 RPS
+load-test-spike:			## k6 spike test — sudden burst to 500 RPS (recovery)
 	k6 run load-test/k6-spike.js
+
+# ── 7a. Stress (constant-arrival-rate per RPS — pure-load percentiles) ────────
+# Each runs 30s warmup + 3min measurement at the target rate. Thresholds
+# apply ONLY to the measurement window via {phase:measure} tag filter.
+
+.PHONY: load-test-stress-5k
+load-test-stress-5k:			## k6 stress — 5,000 RPS constant, 3 min measure
+	STRESS_RATE=5000  k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-10k
+load-test-stress-10k:			## k6 stress — 10,000 RPS constant, 3 min measure
+	STRESS_RATE=10000 k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-25k
+load-test-stress-25k:			## k6 stress — 25,000 RPS constant, 3 min measure
+	STRESS_RATE=25000 k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-50k
+load-test-stress-50k:			## k6 stress — 50,000 RPS constant, 3 min measure
+	STRESS_RATE=50000 k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-100k
+load-test-stress-100k:			## k6 stress — 100,000 RPS constant, 3 min measure (M5 Pro sweat zone)
+	STRESS_RATE=100000 k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-burn
+load-test-stress-burn:			## k6 BURN — 200,000 RPS, 5 min measure. No mercy. Either the bidder breaks or k6 does.
+	STRESS_RATE=200000 STRESS_DURATION=5m k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress
+load-test-stress: load-test-stress-5k load-test-stress-10k load-test-stress-25k load-test-stress-50k	## All stress rates 5k → 50k
+
+.PHONY: load-test-all
+load-test-all:				## Full sequence: baseline → ramp → spike → stress 5k/10k/25k/50k
+	$(MAKE) load-test-baseline
+	$(MAKE) load-test-ramp
+	$(MAKE) load-test-spike
+	$(MAKE) load-test-stress
 
 # ── 8. Logs ───────────────────────────────────────────────────────────────────
 

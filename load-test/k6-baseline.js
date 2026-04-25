@@ -23,9 +23,20 @@ export const options = {
             maxVUs: 200,
         },
     },
+    // Thresholds calibrated against Run 2 baseline observations (p50≈2ms, p95≈3ms,
+    // p99≈4ms, max≈12ms, error=0%) with a margin large enough to absorb normal jitter
+    // but tight enough to catch genuine regressions. abortOnFail=true so a regression
+    // surfaces immediately rather than running the full 2-minute test.
     thresholds: {
-        http_req_duration: ['p(50)<20', 'p(95)<50', 'p(99)<100'],
-        error_rate: ['rate<0.01'],
+        http_req_duration: [
+            { threshold: 'p(50)<5',   abortOnFail: true },
+            { threshold: 'p(95)<10',  abortOnFail: true },
+            { threshold: 'p(99)<25',  abortOnFail: true },
+            { threshold: 'p(99.9)<50', abortOnFail: false },
+            { threshold: 'max<100',   abortOnFail: false },
+        ],
+        error_rate: [{ threshold: 'rate<0.001', abortOnFail: true }], // <0.1% (was <1%)
+        bid_rate:   ['rate>0.85'],   // healthy catalog match — should be ≥85%
     },
 };
 

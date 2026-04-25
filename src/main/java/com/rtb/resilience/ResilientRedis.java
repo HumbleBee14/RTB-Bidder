@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -58,6 +60,22 @@ public final class ResilientRedis implements UserSegmentRepository, FrequencyCap
         circuitBreaker.execute(
                 () -> { frequencyCapper.recordImpression(userId, campaignId); },
                 () -> { logger.debug("Redis circuit open — skipping freq recording for {}", userId); }
+        );
+    }
+
+    /**
+     * Routes the batch MGET through the circuit breaker as a single operation.
+     * When Redis is down: allow all candidates (consistent with isAllowed fallback).
+     */
+    @Override
+    public Set<String> allowedCampaignIds(String userId, Map<String, Integer> campaignMaxImpressions) {
+        return circuitBreaker.execute(
+                () -> frequencyCapper.allowedCampaignIds(userId, campaignMaxImpressions),
+                () -> {
+                    logger.debug("Redis circuit open — allowing all {} candidates for user {}",
+                            campaignMaxImpressions.size(), userId);
+                    return new HashSet<>(campaignMaxImpressions.keySet());
+                }
         );
     }
 

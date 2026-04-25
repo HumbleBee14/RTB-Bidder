@@ -11,7 +11,9 @@ services:
   # Without this, bidder-side latency is the only Redis signal — we can't tell
   # "Redis is slow" from "the stage code around Redis is slow".
   redis-exporter:
-    image: oliver006/redis_exporter:v1.62.0-alpine
+    # v1.82.0-alpine is the first stable line with native linux/arm64 manifests —
+    # earlier tags (v1.62.x) were amd64-only and ran under Rosetta on Apple Silicon.
+    image: oliver006/redis_exporter:v1.82.0-alpine
     environment:
       REDIS_ADDR: redis://redis:6379
     ports:

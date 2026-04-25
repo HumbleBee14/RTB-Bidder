@@ -62,7 +62,7 @@ make load-test-baseline
 | Kafka Consumer Lag | Briefly ~600 messages then drained — absorbed cleanly |
 
 ### Screenshots
-<!-- Save to results/screenshots/ and reference here -->
+<!-- Save to results/screenshots/run1/ and reference here -->
 <!-- baseline-overview.png — QPS, Latency, Fill Rate, Circuit Breakers, GC -->
 <!-- baseline-jvm.png — Heap, Pool, Event Loop Lag, CPU, Threads -->
 <!-- baseline-redis-kafka.png — Redis ops, Kafka send rate, Consumer lag -->
@@ -134,10 +134,10 @@ The saturation knee is **~100–150 RPS** on a single event-loop with synchronou
 ### Screenshots
 
 **h.2-run1.3 — k6 console output**
-![H2 Ramp k6 Console](../results/screenshots/h2-ramp/h.2-run1.3.png)
+![H2 Ramp k6 Console](../results/screenshots/run1/h2-ramp/h.2-run1.3.png)
 
 **h.2-run1.1 — Overview + JVM + Pool**
-![H2 Ramp Overview](../results/screenshots/h2-ramp/h.2-run1.1.png)
+![H2 Ramp Overview](../results/screenshots/run1/h2-ramp/h.2-run1.1.png)
 
 | Panel | Observed |
 |---|---|
@@ -151,7 +151,7 @@ The saturation knee is **~100–150 RPS** on a single event-loop with synchronou
 | BidContext Pool | **Flat line at 1** — pool never grew even at 1000 RPS, zero-alloc proof holds |
 
 **h.2-run1.2 — Ad Funnel + Per-Campaign**
-![H2 Ramp Funnel](../results/screenshots/h2-ramp/h.2-run1.2.png)
+![H2 Ramp Funnel](../results/screenshots/run1/h2-ramp/h.2-run1.2.png)
 
 | Panel | Observed |
 |---|---|
@@ -226,10 +226,10 @@ The difference: **flooding a drain** (H.2 — water keeps rising) vs **a brief s
 ### Screenshots
 
 **h.2-run1.1 — k6 console output**
-![H3 Spike k6 Console](../results/screenshots/h3-spike/h.2-run1.1.png)
+![H3 Spike k6 Console](../results/screenshots/run1/h3-spike/h.2-run1.1.png)
 
 **h.2-run1.2 — Grafana overview (QPS, Latency, JVM, Pool, Event Loop Lag)**
-![H3 Spike Grafana Overview](../results/screenshots/h3-spike/h.2-run1.2.png)
+![H3 Spike Grafana Overview](../results/screenshots/run1/h3-spike/h.2-run1.2.png)
 
 | Panel | Observed |
 |---|---|
@@ -242,7 +242,7 @@ The difference: **flooding a drain** (H.2 — water keeps rising) vs **a brief s
 | GC Pauses | Small visible spikes — ZGC handled burst allocation without pause degradation |
 
 **h.2-run1.3 — Ad Funnel + Per-Campaign**
-![H3 Spike Funnel](../results/screenshots/h3-spike/h.2-run1.3.png)
+![H3 Spike Funnel](../results/screenshots/run1/h3-spike/h.2-run1.3.png)
 
 | Panel | Observed |
 |---|---|
@@ -251,7 +251,7 @@ The difference: **flooding a drain** (H.2 — water keeps rising) vs **a brief s
 | Per-Campaign Bids/sec | All 10 campaigns show identical twin peaks — load distributed evenly |
 
 **h.2-run1.4 — Redis + Kafka + CPU**
-![H3 Spike Redis Kafka](../results/screenshots/h3-spike/h.2-run1.4.png)
+![H3 Spike Redis Kafka](../results/screenshots/run1/h3-spike/h.2-run1.4.png)
 
 | Panel | Observed |
 |---|---|

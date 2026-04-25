@@ -8,6 +8,4 @@ logs/
 .DS_Store
 Thumbs.db
 dependency-reduced-pom.xml
-results/
-!results/screenshots/
-!results/screenshots/**
+results/gc.log*

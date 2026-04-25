@@ -1,18 +1,30 @@
 import { Rate, Trend } from 'k6/metrics';
 import { check } from 'k6';
 
-// 10K seeded users — Zipfian-like distribution: first 1K hit 80% of traffic.
-// Real ad exchanges show similar patterns: a small set of high-traffic publishers
-// generates the majority of bid requests.
-const HOT_USER_COUNT = 1000;
-const COLD_USER_COUNT = 9000;
-const HOT_RATIO = 0.8;
+// 1M seeded users — uniform distribution across the full population.
+//
+// Why uniform instead of Zipfian:
+//   The Zipfian (80/20) distribution we used before concentrated 80% of traffic
+//   on the top 1K users. With a 1-hour freq-cap window, those users exhausted
+//   their caps within seconds, making 95%+ of requests no-bid. That tells us
+//   nothing about pipeline throughput — it just measures how fast we can say "no".
+//
+//   Uniform distribution means every user is equally likely regardless of ID.
+//   With 1M users and any realistic freq-cap (5–20 impressions/hour), a user
+//   hit once at 500 RPS has a 1-in-1M chance of being hit again in the same
+//   second. Freq-cap exhaustion is negligible, so the load test measures what
+//   we actually care about: full-pipeline throughput under sustained load.
+const USER_COUNT = 1_000_000;
 
 const APP_CATEGORIES = ['sports', 'news', 'tech', 'gaming', 'entertainment', 'finance', 'food', 'travel'];
 const DEVICE_TYPES = ['mobile', 'tablet', 'desktop'];
 const DEVICE_OS = ['android', 'ios', 'windows'];
 const GEOS = ['US', 'UK', 'DE', 'JP', 'IN', 'BR', 'AU', 'CA'];
-const SLOT_SIZES = ['300x250', '728x90', '160x600', '320x50'];
+// Standard IAB display sizes — covers all 6 sizes our catalog supports.
+// 300x250 (medium rectangle) and 728x90 (leaderboard) dominate real RTB traffic
+// (~70% combined); 970x250 (billboard) and 300x600 (half-page) are common premium
+// inventory; 160x600 (skyscraper) and 320x50 (mobile banner) round out the mix.
+const SLOT_SIZES = ['300x250', '728x90', '160x600', '320x50', '970x250', '300x600'];
 
 export const BASE_URL = __ENV.TARGET_URL || 'http://localhost:8080';
 
@@ -26,10 +38,9 @@ function pickRandom(arr) {
 }
 
 function generateUserId() {
-    if (Math.random() < HOT_RATIO) {
-        return `user_${String(Math.floor(Math.random() * HOT_USER_COUNT) + 1).padStart(5, '0')}`;
-    }
-    return `user_${String(Math.floor(Math.random() * COLD_USER_COUNT) + HOT_USER_COUNT + 1).padStart(5, '0')}`;
+    // Uniform pick from all 1M seeded users — 7-digit zero-padded to match Redis keys.
+    const n = Math.floor(Math.random() * USER_COUNT) + 1;
+    return `user_${String(n).padStart(7, '0')}`;
 }
 
 export function generateBidRequest() {

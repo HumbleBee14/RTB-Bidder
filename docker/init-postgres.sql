@@ -95,8 +95,9 @@ BEGIN
         IF i % 20 = 0 THEN
             -- Single popular demographic segment — matches a huge slice of users
             segs := ARRAY[popular_segments[1 + (i % array_length(popular_segments, 1))]];
-            -- Standard sizes (300x250 / 728x90) so they're served on most slots
-            sizes := ARRAY['300x250', '728x90'];
+            -- All 6 IAB sizes — broad-reach campaigns provide universal fallback
+            -- for ANY slot size, exactly how production "always-on" inventory behaves
+            sizes := ARRAY['300x250', '728x90', '160x600', '320x50', '970x250', '300x600'];
             INSERT INTO campaigns (
                 id, advertiser, budget, bid_floor,
                 target_segments, creative_sizes, creative_url,
@@ -129,11 +130,14 @@ BEGIN
         ];
         segs := segs[1:seg_count];
 
-        -- pick 1–2 creative sizes (same two-step pattern)
+        -- pick 1–2 creative sizes — the multipliers (1) and (1, offset 3) are chosen
+        -- so every index 1..6 of all_sizes is reachable for both odd and even i.
+        -- The previous (3i mod 6, 5i mod 6) formulas accidentally excluded index 5
+        -- (970x250) entirely because both 3·i mod 6 and (5i mod 6 ∧ i odd) skip 4.
         size_count := 1 + (i % 2);
         sizes := ARRAY[
-            all_sizes[1 + (i * 3 % array_length(all_sizes, 1))],
-            all_sizes[1 + (i * 5 % array_length(all_sizes, 1))]
+            all_sizes[1 + (i % array_length(all_sizes, 1))],
+            all_sizes[1 + ((i + 3) % array_length(all_sizes, 1))]
         ];
         sizes := sizes[1:size_count];
 

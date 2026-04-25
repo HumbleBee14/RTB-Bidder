@@ -154,16 +154,54 @@ test:					## Run unit tests
 # ── 7. Load testing ───────────────────────────────────────────────────────────
 
 .PHONY: load-test-baseline
-load-test-baseline:			## k6 baseline load test — 100 RPS constant for 2 min
+load-test-baseline:			## k6 baseline — 100 RPS constant for 2 min (sanity)
 	k6 run load-test/k6-baseline.js
 
 .PHONY: load-test-ramp
-load-test-ramp:				## k6 ramp test — 50 → 1000 RPS over 4 min
+load-test-ramp:				## k6 ramp test — 50 → 5000 RPS over ~6 min (find knee)
 	k6 run load-test/k6-ramp.js
 
 .PHONY: load-test-spike
-load-test-spike:			## k6 spike test — sudden burst to 500 RPS
+load-test-spike:			## k6 spike test — sudden burst to 500 RPS (recovery)
 	k6 run load-test/k6-spike.js
+
+# ── 7a. Stress (constant-arrival-rate per RPS — pure-load percentiles) ────────
+# Each runs 30s warmup + 3min measurement at the target rate. Thresholds
+# apply ONLY to the measurement window via {phase:measure} tag filter.
+
+.PHONY: load-test-stress-5k
+load-test-stress-5k:			## k6 stress — 5,000 RPS constant, 3 min measure
+	STRESS_RATE=5000  k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-10k
+load-test-stress-10k:			## k6 stress — 10,000 RPS constant, 3 min measure
+	STRESS_RATE=10000 k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-25k
+load-test-stress-25k:			## k6 stress — 25,000 RPS constant, 3 min measure
+	STRESS_RATE=25000 k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-50k
+load-test-stress-50k:			## k6 stress — 50,000 RPS constant, 3 min measure
+	STRESS_RATE=50000 k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-100k
+load-test-stress-100k:			## k6 stress — 100,000 RPS constant, 3 min measure (M5 Pro sweat zone)
+	STRESS_RATE=100000 k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-burn
+load-test-stress-burn:			## k6 BURN — 200,000 RPS, 5 min measure. No mercy. Either the bidder breaks or k6 does.
+	STRESS_RATE=200000 STRESS_DURATION=5m k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress
+load-test-stress: load-test-stress-5k load-test-stress-10k load-test-stress-25k load-test-stress-50k	## All stress rates 5k → 50k
+
+.PHONY: load-test-all
+load-test-all:				## Full sequence: baseline → ramp → spike → stress 5k/10k/25k/50k
+	$(MAKE) load-test-baseline
+	$(MAKE) load-test-ramp
+	$(MAKE) load-test-spike
+	$(MAKE) load-test-stress
 
 # ── 8. Logs ───────────────────────────────────────────────────────────────────
 

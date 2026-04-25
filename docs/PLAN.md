@@ -403,7 +403,7 @@ This is how every ad network works. Without win + impression + click tracking, y
 **What you build**:
 - `reason` label on `bid_responses_total` — every `NoBidReason` enum value becomes its own time series, so fill-rate drops become attributable (targeting vs frequency cap vs budget)
 - `EventLoopLagProbe` — schedules a 100ms task on the Vert.x event loop and records drift between scheduled and actual execution as a `Timer` (p50/p99/p999). Spikes mean the loop was blocked.
-- Pool saturation gauges — `bid_context_pool_available` and `bid_context_pool_total_created`. If the latter keeps climbing after warmup, the pool is undersized and we're back to GC pressure.
+- Pool saturation gauges — `bid_context_pool_available` and `bid_context_pool_allocated`. If the latter keeps climbing after warmup, the pool is undersized and we're back to GC pressure.
 - Grafana dashboard panels for all three plus CPU utilization and JVM thread count (data already exposed by Micrometer binders — just not visualised).
 
 **What you learn**: What a production ad-tech dashboard actually needs beyond basic RED metrics. How Vert.x/Netty systems fail (event-loop blocking) and why that's different from generic CPU saturation. How to validate a performance claim (zero-alloc) with a runtime metric, not just a benchmark.

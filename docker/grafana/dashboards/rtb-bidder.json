@@ -561,7 +561,7 @@
           "legendFormat": "available"
         },
         {
-          "expr": "bid_context_pool_total_created",
+          "expr": "bid_context_pool_allocated",
           "legendFormat": "total created (cumulative)"
         }
       ]

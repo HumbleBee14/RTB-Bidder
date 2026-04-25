@@ -14,9 +14,8 @@ JVM_BASE := --sun-misc-unsafe-memory-access=allow \
             --enable-native-access=ALL-UNNAMED \
             -XX:+UseZGC
 
-# Production: fixed heap + generational ZGC + GC log
+# Production: fixed heap + generational ZGC (default since Java 24) + GC log
 JVM_PROD := $(JVM_BASE) \
-            -XX:+ZGenerational \
             -Xms512m -Xmx512m \
             -XX:+AlwaysPreTouch \
             -Xlog:gc*:file=results/gc.log:time,uptime,level,tags
@@ -74,11 +73,13 @@ run-jar:				## Run existing JAR without rebuilding
 
 .PHONY: run-prod
 run-prod: build				## Build + run in production mode (Postgres campaigns + Kafka events)
+	@mkdir -p results
 	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
 	java $(JVM_PROD) -jar $(JAR)
 
 .PHONY: run-load
 run-load: build				## Build + run optimised for load testing (minimal logging)
+	@mkdir -p results
 	CONSOLE_ENABLED=false JSON_ENABLED=false \
 	java $(JVM_LOAD) -jar $(JAR)
 

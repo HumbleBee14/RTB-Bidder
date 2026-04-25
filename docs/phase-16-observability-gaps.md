@@ -47,7 +47,7 @@ No external dependency — this is implemented as ~60 lines using Vert.x's own `
 Two gauges exposed from the composition root:
 
 - `bid_context_pool_available` — number of contexts currently parked in the pool
-- `bid_context_pool_total_created` — cumulative count of `new BidContext(...)` calls ever made
+- `bid_context_pool_allocated` — cumulative count of `new BidContext(...)` calls ever made
 
 The second one is the key signal. During warmup it climbs to (roughly) the peak concurrency. After that it must plateau. If it keeps climbing under steady load, the configured pool size (default 256) is too small — the pool empties on bursts, every extra request allocates, and Phase 11's zero-alloc promise is broken.
 

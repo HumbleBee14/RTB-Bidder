@@ -170,11 +170,14 @@ public final class Application {
         BidPipeline pipeline = new BidPipeline(stages, pipelineConfig, bidMetrics);
 
         // Pool saturation gauges — validate the Phase 11 zero-alloc claim at runtime.
-        // If bid_context_pool_total_created keeps climbing after warmup, the pool is
+        // If bid_context_pool_allocated keeps climbing after warmup, the pool is
         // undersized and we're allocating on the hot path (GC pressure returns).
+        // Note: avoid `_total` / `_created` suffixes — Micrometer's Prometheus
+        // exporter strips them (they're reserved for counter conventions), which
+        // silently renames the gauge and breaks dashboards/alerts.
         metricsRegistry.registry().gauge("bid_context_pool_available",
                 pipeline, BidPipeline::getContextPoolAvailable);
-        metricsRegistry.registry().gauge("bid_context_pool_total_created",
+        metricsRegistry.registry().gauge("bid_context_pool_allocated",
                 pipeline, BidPipeline::getContextPoolTotalCreated);
 
         KafkaHealthCheck kafkaHealthCheck = new KafkaHealthCheck(config);

@@ -50,13 +50,15 @@ import com.rtb.repository.PostgresCampaignRepository;
 import com.rtb.repository.RedisUserSegmentRepository;
 import com.rtb.server.BidRequestHandler;
 import com.rtb.server.BidRouter;
-import com.rtb.server.HttpServer;
 import com.rtb.server.TrackingHandler;
 import com.rtb.server.WinHandler;
 import com.rtb.targeting.EmbeddingTargetingEngine;
 import com.rtb.targeting.HybridTargetingEngine;
 import com.rtb.targeting.SegmentTargetingEngine;
 import com.rtb.targeting.TargetingEngine;
+import io.vertx.core.AbstractVerticle;
+import io.vertx.core.DeploymentOptions;
+import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.VertxOptions;
 import org.slf4j.Logger;
@@ -230,11 +232,27 @@ public final class Application {
         lagProbe.start();
         Runtime.getRuntime().addShutdownHook(new Thread(lagProbe::stop, "shutdown-lag-probe"));
 
-        HttpServer httpServer = new HttpServer(vertx, bidRouter, port);
+        // Deploy one Verticle instance per CPU core.
+        // Each instance gets its own Netty NIO event-loop thread and its own router.
+        // All dependencies (pipeline, repos, metrics) are shared and thread-safe.
+        // Vert.x enables SO_REUSEPORT automatically so all instances listen on the same
+        // port and the OS load-balances connections across event-loop threads.
+        int eventLoopInstances = Runtime.getRuntime().availableProcessors();
+        logger.info("Deploying {} event-loop verticle instances (one per core)", eventLoopInstances);
 
-        httpServer.start()
-                .onSuccess(server -> logger.info("RTB Bidder started on port {} | SLA: {}ms | stages: {}",
-                        server.actualPort(), pipelineConfig.maxLatencyMs(), stages.size()))
+        vertx.deployVerticle(() -> new AbstractVerticle() {
+            @Override
+            public void start(Promise<Void> startPromise) {
+                vertx.createHttpServer()
+                        .requestHandler(bidRouter.createRouter(vertx))
+                        .listen(port)
+                        .onSuccess(s -> startPromise.complete())
+                        .onFailure(startPromise::fail);
+            }
+        }, new DeploymentOptions().setInstances(eventLoopInstances))
+                .onSuccess(id -> logger.info(
+                        "RTB Bidder started on port {} | {} event-loop threads | {} worker threads | SLA: {}ms | stages: {}",
+                        port, eventLoopInstances, workerPoolSize, pipelineConfig.maxLatencyMs(), stages.size()))
                 .onFailure(err -> {
                     logger.error("Failed to start HTTP server", err);
                     System.err.println();

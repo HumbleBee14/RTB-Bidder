@@ -9,3 +9,5 @@ logs/
 Thumbs.db
 dependency-reduced-pom.xml
 results/
+!results/screenshots/
+!results/screenshots/**

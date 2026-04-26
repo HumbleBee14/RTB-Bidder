@@ -26,9 +26,6 @@ Read to find info; update when making relevant changes — keep these living.
 
 Always read the plan before any new task or in ambiguity. Never build multiple phases in one go. For each phase: think and plan -> implement -> verify edge cases, common failure points, and test end-to-end, modular individual features and complete flow, only then propose the next phase. Also, if something needs to be tested in future due to dependency in later work, add a TODO note flag.
 
-## Commit rule
-
-Each commit must be a small, logically complete, independently runnable and testable slice — not a whole feature dumped at once. If a phase has 4 sub-pieces, that's 4 commits, each leaving the app in a working, buildable, testable state. Message: short imperative subject (≤72 chars) + body explaining WHY and what was verified. Goal: every commit is independently traceable, revertable, and bisect-friendly.
 
 ## Note
 

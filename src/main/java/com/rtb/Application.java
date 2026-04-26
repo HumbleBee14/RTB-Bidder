@@ -51,6 +51,7 @@ import com.rtb.repository.PostgresCampaignRepository;
 import com.rtb.repository.RedisUserSegmentRepository;
 import com.rtb.server.BidRequestHandler;
 import com.rtb.server.BidRouter;
+import com.rtb.server.ImpressionRecorder;
 import com.rtb.server.TrackingHandler;
 import com.rtb.server.WinHandler;
 import com.rtb.targeting.EmbeddingTargetingEngine;
@@ -221,8 +222,15 @@ public final class Application {
         }
         EventPublisher eventPublisher = new ResilientEventPublisher(rawEventPublisher, kafkaCircuitBreaker);
 
+        int impressionWorkers = config.getInt("postresponse.impression.workers", 2);
+        int impressionQueueCapacity = config.getInt("postresponse.impression.queueCapacity", 65536);
+        ImpressionRecorder impressionRecorder = new ImpressionRecorder(
+                resilientRedis, impressionWorkers, impressionQueueCapacity, metricsRegistry.registry());
+        Runtime.getRuntime().addShutdownHook(new Thread(impressionRecorder::close, "shutdown-impression-recorder"));
+
         // Handlers — use resilient wrappers
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(pipeline, resilientRedis, eventPublisher, bidMetrics);
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(
+                pipeline, eventPublisher, bidMetrics, impressionRecorder);
         WinHandler winHandler = new WinHandler(objectMapper, eventPublisher, bidMetrics, campaignRepo);
         TrackingHandler trackingHandler = new TrackingHandler(eventPublisher, bidMetrics);
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize,

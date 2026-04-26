@@ -15,8 +15,12 @@ JVM_BASE := --sun-misc-unsafe-memory-access=allow \
             -XX:+UseZGC
 
 # Production: fixed heap + generational ZGC (default since Java 24) + GC log
+# Heap raised from 512m → 2g: under sustained 5K RPS, allocation rate (mostly
+# LinkedHashMap iterators + AdCandidate + Object[] from sorting) outpaces ZGC
+# with a 512m heap, producing 12K+ GC pauses in 3min. 2g gives ZGC enough
+# headroom that pauses become rare instead of constant.
 JVM_PROD := $(JVM_BASE) \
-            -Xms512m -Xmx512m \
+            -Xms2g -Xmx2g \
             -XX:+AlwaysPreTouch \
             -Xlog:gc*:file=results/gc.log:time,uptime,level,tags
 
@@ -92,6 +96,117 @@ run-prod-load: build			## Build + run in full prod mode (Postgres + Kafka, minim
 	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
 	CONSOLE_ENABLED=false JSON_ENABLED=false \
 	java $(JVM_LOAD) -jar $(JAR)
+
+.PHONY: stop-bidder
+stop-bidder:				## Stop any locally running bidder process on port 8080
+	@PIDS=$$(lsof -tiTCP:8080 -sTCP:LISTEN -n -P); \
+	if [ -n "$$PIDS" ]; then \
+	  echo "Stopping bidder PID(s): $$PIDS"; \
+	  kill $$PIDS; \
+	  sleep 1; \
+	  STILL=$$(lsof -tiTCP:8080 -sTCP:LISTEN -n -P); \
+	  if [ -n "$$STILL" ]; then \
+	    echo "Force stopping PID(s): $$STILL"; \
+	    kill -9 $$STILL; \
+	  fi; \
+	else \
+	  echo "No bidder process listening on :8080"; \
+	fi
+
+.PHONY: load-test-stress-5k-clean
+load-test-stress-5k-clean: build stop-bidder reset-state	## Clean 5K benchmark: fresh bidder, run test, always stop afterward
+	@mkdir -p results; \
+	echo "Starting fresh bidder for clean 5K benchmark..."; \
+	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka CONSOLE_ENABLED=false JSON_ENABLED=false \
+	java $(JVM_LOAD) -jar $(JAR) > results/bidder-bench-5k.log 2>&1 & \
+	BIDDER_PID=$$!; \
+	trap 'kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true' EXIT INT TERM; \
+	echo "Bidder PID: $$BIDDER_PID"; \
+	ATTEMPTS=0; \
+	until curl -sf http://localhost:8080/health > /dev/null; do \
+	  ATTEMPTS=$$((ATTEMPTS + 1)); \
+	  if [ $$ATTEMPTS -ge 60 ]; then \
+	    echo "ERROR: bidder did not become healthy in 60s"; \
+	    exit 1; \
+	  fi; \
+	  sleep 1; \
+	done; \
+	echo "Bidder healthy. Running clean 5K stress test..."; \
+	STRESS_RATE=$${STRESS_RATE:-5000} k6 run load-test/k6-stress.js
+
+.PHONY: load-test-stress-5k-soak
+load-test-stress-5k-soak: build stop-bidder reset-state	## Clean 5K full-duration soak: never abort early, always stop bidder afterward
+	@mkdir -p results; \
+	TS=$$(date +%Y%m%d-%H%M%S); \
+	echo "Starting fresh bidder for 5K soak run..."; \
+	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka CONSOLE_ENABLED=false JSON_ENABLED=false \
+	java $(JVM_LOAD) -jar $(JAR) > results/bidder-soak-5k-$$TS.log 2>&1 & \
+	BIDDER_PID=$$!; \
+	trap 'kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true' EXIT INT TERM; \
+	echo "Bidder PID: $$BIDDER_PID"; \
+	ATTEMPTS=0; \
+	until curl -sf http://localhost:8080/health > /dev/null; do \
+	  ATTEMPTS=$$((ATTEMPTS + 1)); \
+	  if [ $$ATTEMPTS -ge 60 ]; then \
+	    echo "ERROR: bidder did not become healthy in 60s"; \
+	    exit 1; \
+	  fi; \
+	  sleep 1; \
+	done; \
+	echo "Bidder healthy. Running full-duration 5K soak..."; \
+	STRESS_RATE=$${STRESS_RATE:-5000} STRESS_ABORT_ON_FAIL=false k6 run --summary-export results/k6-stress-5k-soak-$$TS.json load-test/k6-stress.js
+
+.PHONY: load-test-stress-5k-repeat
+load-test-stress-5k-repeat: build		## Run N clean 5K trials and save each summary (default N=3)
+	@RUNS=$${RUNS:-3}; \
+	echo "Running $$RUNS clean 5K trials..."; \
+	for i in $$(seq 1 $$RUNS); do \
+	  TS=$$(date +%Y%m%d-%H%M%S); \
+	  echo ""; \
+	  echo "=== trial $$i / $$RUNS ($$TS) ==="; \
+	  $(MAKE) stop-bidder >/dev/null; \
+	  $(MAKE) reset-state >/dev/null; \
+	  mkdir -p results; \
+	  CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka CONSOLE_ENABLED=false JSON_ENABLED=false \
+	  java $(JVM_LOAD) -jar $(JAR) > results/bidder-repeat-5k-$${i}-$$TS.log 2>&1 & \
+	  BIDDER_PID=$$!; \
+	  ATTEMPTS=0; \
+	  until curl -sf http://localhost:8080/health > /dev/null; do \
+	    ATTEMPTS=$$((ATTEMPTS + 1)); \
+	    if [ $$ATTEMPTS -ge 60 ]; then \
+	      echo "ERROR: bidder did not become healthy in 60s"; \
+	      kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true; \
+	      exit 1; \
+	    fi; \
+	    sleep 1; \
+	  done; \
+	  STRESS_RATE=$${STRESS_RATE:-5000} STRESS_ABORT_ON_FAIL=false k6 run --summary-export results/k6-stress-5k-repeat-$${i}-$$TS.json load-test/k6-stress.js || true; \
+	  kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true; \
+	  $(MAKE) stop-bidder >/dev/null; \
+	done; \
+	echo ""; \
+	echo "Saved summaries under results/k6-stress-5k-repeat-*.json"
+
+.PHONY: load-test-stress-25k-clean
+load-test-stress-25k-clean: build stop-bidder reset-state	## Clean 25K benchmark: fresh bidder each run
+	@mkdir -p results; \
+	echo "Starting fresh bidder for clean 25K benchmark..."; \
+	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka CONSOLE_ENABLED=false JSON_ENABLED=false \
+	java $(JVM_LOAD) -jar $(JAR) > results/bidder-bench-25k.log 2>&1 & \
+	BIDDER_PID=$$!; \
+	trap 'kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true' EXIT INT TERM; \
+	echo "Bidder PID: $$BIDDER_PID"; \
+	ATTEMPTS=0; \
+	until curl -sf http://localhost:8080/health > /dev/null; do \
+	  ATTEMPTS=$$((ATTEMPTS + 1)); \
+	  if [ $$ATTEMPTS -ge 60 ]; then \
+	    echo "ERROR: bidder did not become healthy in 60s"; \
+	    exit 1; \
+	  fi; \
+	  sleep 1; \
+	done; \
+	echo "Bidder healthy. Running clean 25K stress test..."; \
+	STRESS_RATE=25000 k6 run load-test/k6-stress.js
 
 # ── 4. Docker infrastructure ──────────────────────────────────────────────────
 
@@ -205,22 +320,28 @@ load-test-spike:			## k6 spike test — sudden burst to 500 RPS (recovery)
 # ── 7a. Stress (constant-arrival-rate per RPS — pure-load percentiles) ────────
 # Each runs 30s warmup + 3min measurement at the target rate. Thresholds
 # apply ONLY to the measurement window via {phase:measure} tag filter.
+#
+# Important: with pacing.type=local, reusing the same JVM across runs burns the
+# in-memory campaign budgets and invalidates repeated measurements. The default
+# 5K target therefore uses the clean stop/reset/restart path below.
+
+.PHONY: load-test-stress-5k-live
+load-test-stress-5k-live:			## k6 stress against the CURRENT running bidder (unsafe for repeated local-budget runs)
+	STRESS_RATE=$${STRESS_RATE:-5000}  k6 run load-test/k6-stress.js
 
 .PHONY: load-test-stress-5k
-load-test-stress-5k:			## k6 stress — 5,000 RPS constant, 3 min measure
-	STRESS_RATE=5000  k6 run load-test/k6-stress.js
+load-test-stress-5k: load-test-stress-5k-clean	## k6 stress — 5,000 RPS constant, fresh bidder each run
 
 .PHONY: load-test-stress-10k
 load-test-stress-10k:			## k6 stress — 10,000 RPS constant, 3 min measure
 	STRESS_RATE=10000 k6 run load-test/k6-stress.js
 
 .PHONY: load-test-stress-25k
-load-test-stress-25k:			## k6 stress — 25,000 RPS constant, 3 min measure
-	STRESS_RATE=25000 k6 run load-test/k6-stress.js
+load-test-stress-25k: load-test-stress-25k-clean	## k6 stress — 25,000 RPS constant, fresh bidder each run
 
 .PHONY: load-test-stress-50k
 load-test-stress-50k:			## k6 stress — 50,000 RPS constant, 3 min measure
-	STRESS_RATE=50000 k6 run load-test/k6-stress.js
+	STRESS_RATE=$${STRESS_RATE:-5000}0 k6 run load-test/k6-stress.js
 
 .PHONY: load-test-stress-100k
 load-test-stress-100k:			## k6 stress — 100,000 RPS constant, 3 min measure (M5 Pro sweat zone)

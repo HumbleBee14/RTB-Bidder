@@ -29,6 +29,7 @@ import { sendBidAndRecord } from './helpers.js';
 const RATE     = parseInt(__ENV.STRESS_RATE || '5000');
 const DURATION = __ENV.STRESS_DURATION      || '3m';
 const WARMUP   = __ENV.STRESS_WARMUP        || '30s';
+const ABORT    = (__ENV.STRESS_ABORT_ON_FAIL || 'true').toLowerCase() !== 'false';
 
 // VU sizing — needs enough headroom that k6 itself is never the constraint,
 // including during the warmup→measure handoff when response times can briefly
@@ -76,12 +77,12 @@ export const options = {
     // regression aborts in seconds rather than running the full 3-minute test.
     thresholds: {
         'http_req_duration{phase:measure}': [
-            { threshold: 'p(50)<20',    abortOnFail: true },   // realistic floor: 280-key MGET takes ~13ms
-            { threshold: 'p(95)<45',    abortOnFail: true },
-            { threshold: 'p(99)<50',    abortOnFail: true },   // SLA boundary
+            { threshold: 'p(50)<20',    abortOnFail: ABORT },   // realistic floor: 280-key MGET takes ~13ms
+            { threshold: 'p(95)<45',    abortOnFail: ABORT },
+            { threshold: 'p(99)<50',    abortOnFail: ABORT },   // SLA boundary
             { threshold: 'p(99.9)<100', abortOnFail: false },
         ],
-        'error_rate{phase:measure}': [{ threshold: 'rate<0.01', abortOnFail: true }],
+        'error_rate{phase:measure}': [{ threshold: 'rate<0.01', abortOnFail: ABORT }],
         'bid_rate{phase:measure}':   ['rate>0.80'],
     },
 };

@@ -98,23 +98,18 @@ run-jar:				## Run existing JAR without rebuilding
 	java $(JVM_BASE) -jar $(JAR)
 
 .PHONY: run-prod
-run-prod: build				## Build + run in production mode (Postgres campaigns + Kafka events)
+run-prod: build				## Build + run with prod JVM flags (heap, GC log). Source/events follow .env.
 	@mkdir -p results
-	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
 	java $(JVM_PROD) -jar $(JAR)
 
 .PHONY: run-load
-run-load: build				## Build + run optimised for load testing (JSON campaigns, minimal logging)
+run-load: build				## Build + run with load-test JVM flags (heap, JFR, minimal logging). Source/events follow .env.
 	@mkdir -p results
 	CONSOLE_ENABLED=false JSON_ENABLED=false \
 	java $(JVM_LOAD) -jar $(JAR)
 
 .PHONY: run-prod-load
-run-prod-load: build			## Build + run in full prod mode (Postgres + Kafka, minimal logging)
-	@mkdir -p results
-	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
-	CONSOLE_ENABLED=false JSON_ENABLED=false \
-	java $(JVM_LOAD) -jar $(JAR)
+run-prod-load: run-load			## Alias for run-load (kept for muscle memory)
 
 .PHONY: stop-bidder
 stop-bidder:				## Stop any locally running bidder process on port 8080
@@ -243,7 +238,7 @@ load-test-spike:			## k6 spike test — sudden burst to 500 RPS (recovery)
 
 # Internal helper — every per-RPS target calls this with RATE
 define run_stress_test
-	@curl -sf http://localhost:8080/health > /dev/null || (echo "ERROR: bidder not running on :8080. Start it with 'make run-prod-load' in another terminal." && exit 1)
+	@curl -s -o /dev/null --connect-timeout 1 http://localhost:8080/metrics || (echo "ERROR: bidder not responding on :8080. Start it with 'make run-prod-load' in another terminal." && exit 1)
 	@$(MAKE) reset-state >/dev/null
 	@mkdir -p results
 	@TS=$$(date +%Y%m%d-%H%M%S); \
@@ -257,6 +252,14 @@ load-test-stress-5k:			## k6 stress at 5,000 RPS (30s warmup + 3min measure)
 .PHONY: load-test-stress-10k
 load-test-stress-10k:			## k6 stress at 10,000 RPS
 	$(call run_stress_test,10000)
+
+.PHONY: load-test-stress-15k
+load-test-stress-15k:			## k6 stress at 15,000 RPS
+	$(call run_stress_test,15000)
+
+.PHONY: load-test-stress-20k
+load-test-stress-20k:			## k6 stress at 20,000 RPS
+	$(call run_stress_test,20000)
 
 .PHONY: load-test-stress-25k
 load-test-stress-25k:			## k6 stress at 25,000 RPS
@@ -272,7 +275,7 @@ load-test-stress-100k:			## k6 stress at 100,000 RPS
 
 .PHONY: load-test-stress-burn
 load-test-stress-burn:			## k6 BURN — 200,000 RPS, 5 min measure
-	@curl -sf http://localhost:8080/health > /dev/null || (echo "ERROR: bidder not running on :8080." && exit 1)
+	@curl -s -o /dev/null --connect-timeout 1 http://localhost:8080/metrics || (echo "ERROR: bidder not responding on :8080." && exit 1)
 	@$(MAKE) reset-state >/dev/null
 	@mkdir -p results
 	@TS=$$(date +%Y%m%d-%H%M%S); \

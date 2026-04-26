@@ -12,6 +12,11 @@ import java.util.Set;
 /**
  * Matches campaigns to users based on segment overlap.
  * A campaign matches if the user has at least one segment from the campaign's target set.
+ *
+ * Implementation: encodes segment names as bit positions (see SegmentBitmap), so the
+ * per-campaign overlap check is a single bitwise AND on two longs. The user's bitmap
+ * is computed once per request from the freshly-fetched Set<String>; campaign target
+ * bitmaps are lazily cached forever (or until catalog reload).
  */
 public final class SegmentTargetingEngine implements TargetingEngine {
 
@@ -22,24 +27,15 @@ public final class SegmentTargetingEngine implements TargetingEngine {
             return List.of();
         }
 
+        long userBits = SegmentBitmap.encode(userSegments);   // one-shot per request
+
         List<AdCandidate> candidates = new ArrayList<>();
         for (Campaign campaign : campaigns) {
-            if (hasOverlap(campaign.targetSegments(), userSegments)) {
+            long targetBits = SegmentBitmap.forCampaign(campaign);   // cached across requests
+            if ((userBits & targetBits) != 0L) {
                 candidates.add(new AdCandidate(campaign));
             }
         }
         return candidates;
-    }
-
-    private boolean hasOverlap(Set<String> targetSegments, Set<String> userSegments) {
-        // Check the smaller set against the larger for O(min(m,n)) instead of O(m*n)
-        Set<String> smaller = targetSegments.size() <= userSegments.size() ? targetSegments : userSegments;
-        Set<String> larger = smaller == targetSegments ? userSegments : targetSegments;
-        for (String segment : smaller) {
-            if (larger.contains(segment)) {
-                return true;
-            }
-        }
-        return false;
     }
 }

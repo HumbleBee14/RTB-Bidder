@@ -37,6 +37,7 @@ public final class CachedCampaignRepository implements CampaignRepository {
     public synchronized void refresh() {
         List<Campaign> campaigns = List.copyOf(delegate.getActiveCampaigns());
         cache.set(campaigns);
+        com.rtb.targeting.SegmentBitmap.clearCampaignCache();   // stale ids would be wrong after a reload
         logger.info("Campaign cache refreshed: {} active campaigns", campaigns.size());
     }
 }

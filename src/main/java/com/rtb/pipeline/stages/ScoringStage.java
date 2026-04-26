@@ -24,11 +24,9 @@ public final class ScoringStage implements PipelineStage {
     public void process(BidContext ctx) {
         AdContext adContext = AdContext.from(ctx.getRequest());
         List<AdCandidate> candidates = ctx.getCandidates();
-
-        for (AdCandidate candidate : candidates) {
-            double score = scorer.score(candidate.getCampaign(), ctx.getUserProfile(), adContext);
-            candidate.setScore(score);
-        }
+        // Single batch call — implementations can amortise per-request work (e.g.
+        // FeatureWeightedScorer encodes user segments to a bitmap once).
+        scorer.scoreAll(candidates, ctx.getUserProfile(), adContext);
     }
 
     @Override

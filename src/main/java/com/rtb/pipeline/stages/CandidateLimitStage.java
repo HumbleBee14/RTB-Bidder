@@ -7,6 +7,7 @@ import com.rtb.pipeline.PipelineStage;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.PriorityQueue;
 
 /**
  * Truncates the candidate list to the top N by a cheap heuristic, BEFORE expensive scoring.
@@ -36,9 +37,10 @@ import java.util.List;
 public final class CandidateLimitStage implements PipelineStage {
 
     private final int maxCandidates;
-    // Pre-built comparator: highest value_per_click first.
-    private static final Comparator<AdCandidate> BY_VALUE_DESC =
-            Comparator.comparingDouble((AdCandidate c) -> c.getCampaign().valuePerClick()).reversed();
+    // Min-heap comparator: SMALLEST value_per_click on top, ready for eviction
+    // when a better candidate arrives. That's how a fixed-size top-K heap works.
+    private static final Comparator<AdCandidate> BY_VALUE_ASC =
+            Comparator.comparingDouble(c -> c.getCampaign().valuePerClick());
 
     /**
      * @param maxCandidates  cap on candidates passed to the next stage.
@@ -59,17 +61,32 @@ public final class CandidateLimitStage implements PipelineStage {
         }
 
         List<AdCandidate> candidates = ctx.getCandidates();
-        if (candidates.size() <= maxCandidates) {
-            return; // already within budget — no sort, no allocation
+        int n = candidates.size();
+        if (n <= maxCandidates) {
+            return; // already within budget — no work
         }
 
-        // Copy into a mutable ArrayList — upstream stages may return immutable lists
-        // (e.g., Collectors.toUnmodifiableList()), in which case sort() would throw.
-        // O(N log N) sort, then take top maxCandidates. The copy is unavoidable here
-        // for correctness, and List.copyOf detaches the result from the working buffer.
-        ArrayList<AdCandidate> sorted = new ArrayList<>(candidates);
-        sorted.sort(BY_VALUE_DESC);
-        ctx.setCandidates(List.copyOf(sorted.subList(0, maxCandidates)));
+        // Top-K selection via a bounded min-heap. The heap holds the K best-so-far
+        // candidates; the smallest one sits on top, ready to be evicted when a better
+        // one arrives. Total cost: O(N log K) compares vs O(N log N) for a full sort.
+        // Same output: top-K by value_per_click, regardless of order in the heap.
+        PriorityQueue<AdCandidate> topK = new PriorityQueue<>(maxCandidates + 1, BY_VALUE_ASC);
+        for (AdCandidate c : candidates) {
+            if (topK.size() < maxCandidates) {
+                topK.offer(c);
+            } else if (BY_VALUE_ASC.compare(c, topK.peek()) > 0) {
+                // c.value > heap-top.value → replace the smallest with c
+                topK.poll();
+                topK.offer(c);
+            }
+        }
+
+        // Drain into a new ArrayList. The downstream pipeline doesn't depend on order
+        // here — ScoringStage scores everything regardless, RankingStage sorts by score
+        // afterward. So leaving the heap order is safe.
+        ArrayList<AdCandidate> result = new ArrayList<>(maxCandidates);
+        result.addAll(topK);
+        ctx.setCandidates(result);
     }
 
     @Override

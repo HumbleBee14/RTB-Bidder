@@ -6,7 +6,6 @@ import com.rtb.codec.BidRequestCodec;
 import com.rtb.codec.BidResponseCodec;
 import com.rtb.event.EventPublisher;
 import com.rtb.event.events.BidEvent;
-import com.rtb.frequency.FrequencyCapper;
 import com.rtb.metrics.BidMetrics;
 import com.rtb.model.BidRequest;
 import com.rtb.model.NoBidReason;
@@ -21,8 +20,6 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Handles bid requests — the hot path.
@@ -30,7 +27,7 @@ import java.util.concurrent.Executors;
  * Threading model (Phase 17):
  *   Event-loop thread : accept request → parse JSON (~50µs, CPU only) → send response
  *   Worker thread     : full 8-stage pipeline including blocking Redis SMEMBERS (~1ms)
- *   Virtual thread    : post-response fire-and-forget (freq-cap write + Kafka publish)
+ *   Background worker : bounded write-behind queue for freq-cap writes
  *
  * Separating parse/send from blocking I/O keeps the event loop free to accept the
  * next connection immediately. Throughput ceiling becomes worker-pool-size / pipeline-latency
@@ -44,22 +41,20 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
     private static final Logger logger = LoggerFactory.getLogger(BidRequestHandler.class);
 
     private final BidPipeline pipeline;
-    private final FrequencyCapper frequencyCapper;
     private final EventPublisher eventPublisher;
     private final BidMetrics bidMetrics;
     private final BidRequestCodec requestCodec;
     private final BidResponseCodec responseCodec;
+    private final ImpressionRecorder impressionRecorder;
     private final JsonFactory jsonFactory;
-    // Virtual threads: each post-response task blocks on Redis + Kafka, but virtual threads
-    // park cheaply rather than consuming an OS thread. No pool size tuning needed.
-    private final ExecutorService postResponseExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
-    public BidRequestHandler(BidPipeline pipeline, FrequencyCapper frequencyCapper,
-                             EventPublisher eventPublisher, BidMetrics bidMetrics) {
+    public BidRequestHandler(BidPipeline pipeline,
+                             EventPublisher eventPublisher, BidMetrics bidMetrics,
+                             ImpressionRecorder impressionRecorder) {
         this.pipeline = pipeline;
-        this.frequencyCapper = frequencyCapper;
         this.eventPublisher = eventPublisher;
         this.bidMetrics = bidMetrics;
+        this.impressionRecorder = impressionRecorder;
         this.jsonFactory = new JsonFactory();
         this.requestCodec = new BidRequestCodec();
         this.responseCodec = new BidResponseCodec(jsonFactory);
@@ -140,13 +135,13 @@ public final class BidRequestHandler implements Handler<RoutingContext> {
             pipeline.release(result);
             toRelease = null;
 
-            // Freq-cap write + Kafka publish: fire-and-forget on virtual threads
-            postResponseExecutor.submit(() -> {
-                for (Winner w : winners) {
-                    frequencyCapper.recordImpression(w.userId(), w.campaignId());
-                }
-                eventPublisher.publishBid(BidEvent.bid(requestId, userId, slotBids, latencyMs));
-            });
+            // Redis writes go through a bounded write-behind queue so a burst cannot
+            // create unbounded background pressure. Kafka publish is already async in
+            // KafkaEventPublisher, so this call only enqueues into that publisher.
+            for (Winner w : winners) {
+                impressionRecorder.record(w.userId(), w.campaignId());
+            }
+            eventPublisher.publishBid(BidEvent.bid(requestId, userId, slotBids, latencyMs));
 
         } catch (Exception e) {
             logger.error("Failed to finish bid request", e);

@@ -16,40 +16,39 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Fetches user segments from Redis Sets via SMEMBERS.
  *
- * Uses Lettuce's async API on a single shared connection. The calling worker
- * thread still blocks on the returned future ({@code .get(timeout)}), so the
- * caller's contract is unchanged from the previous synchronous implementation —
- * but multiple worker threads can now have commands in flight on the same
- * connection concurrently, lifting per-connection throughput from ~5K ops/s
- * (sync API ceiling) to ~100K ops/s (async + auto-flush).
- *
- * This was the leading suspect for the 5K RPS saturation knee observed in
- * Run 3. See docs/perf/improvements.md §1 for the rationale and
- * docs/notes/profiling.md for how we'll verify the change with flame graphs.
+ * Uses a round-robin connection array for the same reason as RedisFrequencyCapper:
+ * a GenericObjectPool adds borrow/return latency under high concurrency. A fixed
+ * array of N connections gives N decoder threads with zero acquisition overhead.
  */
 public final class RedisUserSegmentRepository implements UserSegmentRepository, AutoCloseable {
 
     private static final Logger logger = LoggerFactory.getLogger(RedisUserSegmentRepository.class);
 
     private final RedisClient client;
-    private final StatefulRedisConnection<String, String> connection;
-    private final RedisAsyncCommands<String, String> commands;
+    private final StatefulRedisConnection<String, String>[] connections;
+    private final AtomicInteger roundRobin = new AtomicInteger();
     private final long commandTimeoutMs;
     private final Timer smembersTimer;
 
+    @SuppressWarnings("unchecked")
     public RedisUserSegmentRepository(RedisConfig config, MeterRegistry registry) {
         RedisURI uri = RedisURI.create(config.uri());
         uri.setTimeout(Duration.ofMillis(config.connectTimeoutMs()));
 
         this.client = RedisClient.create(uri);
-        this.connection = client.connect();
-        this.commands = connection.async();
-        connection.setTimeout(Duration.ofMillis(config.commandTimeoutMs()));
         this.commandTimeoutMs = config.commandTimeoutMs();
+
+        int n = config.poolSize();
+        this.connections = new StatefulRedisConnection[n];
+        for (int i = 0; i < n; i++) {
+            connections[i] = client.connect();
+            connections[i].setTimeout(Duration.ofMillis(commandTimeoutMs));
+        }
 
         this.smembersTimer = Timer.builder("redis_client_command_duration_seconds")
                 .tag("command", "smembers")
@@ -57,11 +56,16 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
                 .publishPercentiles(0.5, 0.9, 0.99, 0.999)
                 .register(registry);
 
-        logger.info("Connected to Redis: {}:{} (async API)", uri.getHost(), uri.getPort());
+        logger.info("Connected to Redis: {}:{} ({} connections)", uri.getHost(), uri.getPort(), n);
+    }
+
+    private RedisAsyncCommands<String, String> nextCommands() {
+        int idx = Math.abs(roundRobin.getAndIncrement() % connections.length);
+        return connections[idx].async();
     }
 
     public StatefulRedisConnection<String, String> getConnection() {
-        return connection;
+        return connections[0];
     }
 
     @Override
@@ -69,7 +73,7 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
         String key = "user:" + userId + ":segments";
         return smembersTimer.record(() -> {
             try {
-                Set<String> segments = commands.smembers(key).get(commandTimeoutMs, TimeUnit.MILLISECONDS);
+                Set<String> segments = nextCommands().smembers(key).get(commandTimeoutMs, TimeUnit.MILLISECONDS);
                 return segments != null ? segments : Collections.emptySet();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -83,7 +87,9 @@ public final class RedisUserSegmentRepository implements UserSegmentRepository, 
 
     @Override
     public void close() {
-        connection.close();
+        for (StatefulRedisConnection<String, String> conn : connections) {
+            conn.close();
+        }
         client.shutdown();
     }
 }

@@ -2,7 +2,7 @@ package com.rtb.health;
 
 import io.lettuce.core.api.StatefulRedisConnection;
 
-/** Pings Redis using an existing shared connection — no new connections per check. */
+/** Pings Redis using one of the shared connections — no dedicated health-check connection. */
 public final class RedisHealthCheck implements HealthCheck {
 
     private final StatefulRedisConnection<String, String> connection;

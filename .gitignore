@@ -9,3 +9,8 @@ logs/
 Thumbs.db
 dependency-reduced-pom.xml
 results/gc.log*
+
+# Load-test artifacts — re-generated each run, not source-controlled
+results/flight-*.jfr
+results/k6-stress-*.json
+results/bidder-*.log

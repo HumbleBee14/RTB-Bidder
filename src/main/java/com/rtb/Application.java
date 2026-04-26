@@ -51,6 +51,7 @@ import com.rtb.repository.PostgresCampaignRepository;
 import com.rtb.repository.RedisUserSegmentRepository;
 import com.rtb.server.BidRequestHandler;
 import com.rtb.server.BidRouter;
+import com.rtb.server.ImpressionRecorder;
 import com.rtb.server.TrackingHandler;
 import com.rtb.server.WinHandler;
 import com.rtb.targeting.EmbeddingTargetingEngine;
@@ -169,19 +170,21 @@ public final class Application {
         // Pipeline stages — executed in order.
         // resilientRedis wraps both userSegmentRepo AND frequencyCapper with one circuit
         // breaker — if Redis is down, both segment lookup and freq capping degrade together.
-        // CandidateLimitStage truncates after freq-cap so we score only the top N by
-        // value_per_click (default 0 = unlimited; see CandidateLimitStage javadoc for ranges).
         int maxCandidates = config.getInt("pipeline.candidates.max", 0);
         if (maxCandidates > 0) {
             logger.info("Candidate limit: top {} by value_per_click before scoring", maxCandidates);
         }
+        int freqCapBatchSize = config.getInt("pipeline.frequencycap.batchSize", 16);
+        int freqCapKeepTopAllowed = config.getInt("pipeline.frequencycap.keepTopAllowed", 64);
+        logger.info("Frequency cap read strategy: score-ordered pages of {} until {} allowed candidates kept",
+                freqCapBatchSize, freqCapKeepTopAllowed);
         List<PipelineStage> stages = List.of(
                 new RequestValidationStage(),
                 new UserEnrichmentStage(resilientRedis),       // segments via circuit breaker
                 new CandidateRetrievalStage(campaignRepo, targetingEngine),
-                new FrequencyCapStage(resilientRedis),          // freq cap via same circuit breaker
                 new CandidateLimitStage(maxCandidates),         // optional pre-scoring truncation
                 new ScoringStage(scorer),
+                new FrequencyCapStage(resilientRedis, freqCapBatchSize, freqCapKeepTopAllowed),
                 new RankingStage(),
                 new BudgetPacingStage(budgetPacer),
                 new ResponseBuildStage(baseUrl)
@@ -219,8 +222,15 @@ public final class Application {
         }
         EventPublisher eventPublisher = new ResilientEventPublisher(rawEventPublisher, kafkaCircuitBreaker);
 
+        int impressionWorkers = config.getInt("postresponse.impression.workers", 2);
+        int impressionQueueCapacity = config.getInt("postresponse.impression.queueCapacity", 65536);
+        ImpressionRecorder impressionRecorder = new ImpressionRecorder(
+                resilientRedis, impressionWorkers, impressionQueueCapacity, metricsRegistry.registry());
+        Runtime.getRuntime().addShutdownHook(new Thread(impressionRecorder::close, "shutdown-impression-recorder"));
+
         // Handlers — use resilient wrappers
-        BidRequestHandler bidRequestHandler = new BidRequestHandler(pipeline, resilientRedis, eventPublisher, bidMetrics);
+        BidRequestHandler bidRequestHandler = new BidRequestHandler(
+                pipeline, eventPublisher, bidMetrics, impressionRecorder);
         WinHandler winHandler = new WinHandler(objectMapper, eventPublisher, bidMetrics, campaignRepo);
         TrackingHandler trackingHandler = new TrackingHandler(eventPublisher, bidMetrics);
         BidRouter bidRouter = new BidRouter(bidRequestHandler, winHandler, trackingHandler, maxBodySize,

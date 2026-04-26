@@ -12,5 +12,5 @@ results/gc.log*
 
 # Load-test artifacts — re-generated each run, not source-controlled
 results/flight-*.jfr
-results/k6-stress-*.json
+results/k6-*.json
 results/bidder-*.log

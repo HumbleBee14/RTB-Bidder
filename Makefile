@@ -3,6 +3,25 @@
 #  Usage: make <target>   |   Run `make help` to see all targets.
 # ──────────────────────────────────────────────────────────────────────────────
 
+# ── .env auto-load ────────────────────────────────────────────────────────────
+# Source .env (if present) and EXPORT every variable into Make's environment.
+# This is what makes `FREQCAP_STORE=aerospike` in .env actually flip behaviour:
+#   * docker-compose auto-reads COMPOSE_PROFILES from env → picks the aerospike
+#     container without any --profile flag on the command line.
+#   * java picks up FREQCAP_STORE / AEROSPIKE_PORT / etc via System.getenv()
+#     (AppConfig prefers env over application.properties).
+ifneq (,$(wildcard ./.env))
+    include .env
+    export
+endif
+
+# Derive the docker-compose profile from FREQCAP_STORE so a single .env switch
+# controls both "which container starts" and "which client the bidder uses."
+# Empty profile = no aerospike container; "aerospike" = it starts.
+ifeq ($(FREQCAP_STORE),aerospike)
+    export COMPOSE_PROFILES := aerospike
+endif
+
 JAR := target/rtb-bidder-1.0.0.jar
 MVN := ./mvnw
 
@@ -113,126 +132,33 @@ stop-bidder:				## Stop any locally running bidder process on port 8080
 	  echo "No bidder process listening on :8080"; \
 	fi
 
-.PHONY: load-test-stress-5k-clean
-load-test-stress-5k-clean: build stop-bidder reset-state	## Clean 5K benchmark: fresh bidder, run test, always stop afterward
-	@mkdir -p results; \
-	echo "Starting fresh bidder for clean 5K benchmark..."; \
-	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka CONSOLE_ENABLED=false JSON_ENABLED=false \
-	java $(JVM_LOAD) -jar $(JAR) > results/bidder-bench-5k.log 2>&1 & \
-	BIDDER_PID=$$!; \
-	trap 'kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true' EXIT INT TERM; \
-	echo "Bidder PID: $$BIDDER_PID"; \
-	ATTEMPTS=0; \
-	until curl -sf http://localhost:8080/health > /dev/null; do \
-	  ATTEMPTS=$$((ATTEMPTS + 1)); \
-	  if [ $$ATTEMPTS -ge 60 ]; then \
-	    echo "ERROR: bidder did not become healthy in 60s"; \
-	    exit 1; \
-	  fi; \
-	  sleep 1; \
-	done; \
-	echo "Bidder healthy. Running clean 5K stress test..."; \
-	STRESS_RATE=$${STRESS_RATE:-5000} k6 run load-test/k6-stress.js
-
-.PHONY: load-test-stress-5k-soak
-load-test-stress-5k-soak: build stop-bidder reset-state	## Clean 5K full-duration soak: never abort early, always stop bidder afterward
-	@mkdir -p results; \
-	TS=$$(date +%Y%m%d-%H%M%S); \
-	echo "Starting fresh bidder for 5K soak run..."; \
-	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka CONSOLE_ENABLED=false JSON_ENABLED=false \
-	java $(JVM_LOAD) -jar $(JAR) > results/bidder-soak-5k-$$TS.log 2>&1 & \
-	BIDDER_PID=$$!; \
-	trap 'kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true' EXIT INT TERM; \
-	echo "Bidder PID: $$BIDDER_PID"; \
-	ATTEMPTS=0; \
-	until curl -sf http://localhost:8080/health > /dev/null; do \
-	  ATTEMPTS=$$((ATTEMPTS + 1)); \
-	  if [ $$ATTEMPTS -ge 60 ]; then \
-	    echo "ERROR: bidder did not become healthy in 60s"; \
-	    exit 1; \
-	  fi; \
-	  sleep 1; \
-	done; \
-	echo "Bidder healthy. Running full-duration 5K soak..."; \
-	STRESS_RATE=$${STRESS_RATE:-5000} STRESS_ABORT_ON_FAIL=false k6 run --summary-export results/k6-stress-5k-soak-$$TS.json load-test/k6-stress.js
-
-.PHONY: load-test-stress-5k-repeat
-load-test-stress-5k-repeat: build		## Run N clean 5K trials and save each summary (default N=3)
-	@RUNS=$${RUNS:-3}; \
-	echo "Running $$RUNS clean 5K trials..."; \
-	for i in $$(seq 1 $$RUNS); do \
-	  TS=$$(date +%Y%m%d-%H%M%S); \
-	  echo ""; \
-	  echo "=== trial $$i / $$RUNS ($$TS) ==="; \
-	  $(MAKE) stop-bidder >/dev/null; \
-	  $(MAKE) reset-state >/dev/null; \
-	  mkdir -p results; \
-	  CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka CONSOLE_ENABLED=false JSON_ENABLED=false \
-	  java $(JVM_LOAD) -jar $(JAR) > results/bidder-repeat-5k-$${i}-$$TS.log 2>&1 & \
-	  BIDDER_PID=$$!; \
-	  ATTEMPTS=0; \
-	  until curl -sf http://localhost:8080/health > /dev/null; do \
-	    ATTEMPTS=$$((ATTEMPTS + 1)); \
-	    if [ $$ATTEMPTS -ge 60 ]; then \
-	      echo "ERROR: bidder did not become healthy in 60s"; \
-	      kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true; \
-	      exit 1; \
-	    fi; \
-	    sleep 1; \
-	  done; \
-	  STRESS_RATE=$${STRESS_RATE:-5000} STRESS_ABORT_ON_FAIL=false k6 run --summary-export results/k6-stress-5k-repeat-$${i}-$$TS.json load-test/k6-stress.js || true; \
-	  kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true; \
-	  $(MAKE) stop-bidder >/dev/null; \
-	done; \
-	echo ""; \
-	echo "Saved summaries under results/k6-stress-5k-repeat-*.json"
-
-.PHONY: load-test-stress-25k-clean
-load-test-stress-25k-clean: build stop-bidder reset-state	## Clean 25K benchmark: fresh bidder each run
-	@mkdir -p results; \
-	echo "Starting fresh bidder for clean 25K benchmark..."; \
-	CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka CONSOLE_ENABLED=false JSON_ENABLED=false \
-	java $(JVM_LOAD) -jar $(JAR) > results/bidder-bench-25k.log 2>&1 & \
-	BIDDER_PID=$$!; \
-	trap 'kill $$BIDDER_PID 2>/dev/null || true; wait $$BIDDER_PID 2>/dev/null || true' EXIT INT TERM; \
-	echo "Bidder PID: $$BIDDER_PID"; \
-	ATTEMPTS=0; \
-	until curl -sf http://localhost:8080/health > /dev/null; do \
-	  ATTEMPTS=$$((ATTEMPTS + 1)); \
-	  if [ $$ATTEMPTS -ge 60 ]; then \
-	    echo "ERROR: bidder did not become healthy in 60s"; \
-	    exit 1; \
-	  fi; \
-	  sleep 1; \
-	done; \
-	echo "Bidder healthy. Running clean 25K stress test..."; \
-	STRESS_RATE=25000 k6 run load-test/k6-stress.js
 
 # ── 4. Docker infrastructure ──────────────────────────────────────────────────
 
 .PHONY: infra-up
-infra-up:				## Start all 6 Docker services (Redis, Kafka, Postgres, ClickHouse, Prometheus, Grafana)
+infra-up:				## Start all infra (Aerospike included automatically when FREQCAP_STORE=aerospike in .env)
 	docker-compose up -d
 
 .PHONY: infra-up-minimal
 infra-up-minimal:			## Start Redis only (minimum to run the bidder)
 	docker-compose up -d redis
 
+
 .PHONY: infra-start
 infra-start:				## Resume previously stopped containers (data still intact)
 	docker-compose start
 
 .PHONY: infra-stop
-infra-stop:				## Pause containers — data volumes kept, fast restart
-	docker-compose stop
+infra-stop:				## Pause ALL containers (including Aerospike if it ever ran) — data volumes kept, fast restart
+	COMPOSE_PROFILES=aerospike docker-compose stop
 
 .PHONY: infra-down
-infra-down:				## Remove containers — data volumes still kept
-	docker-compose down
+infra-down:				## Remove ALL containers (including Aerospike) — data volumes still kept
+	COMPOSE_PROFILES=aerospike docker-compose down
 
 .PHONY: infra-reset
-infra-reset:				## ⚠ Remove containers AND volumes — full wipe, re-seed needed
-	docker-compose down -v
+infra-reset:				## ⚠ Remove ALL containers AND volumes — full wipe, re-seed needed
+	COMPOSE_PROFILES=aerospike docker-compose down -v
 
 .PHONY: infra-status
 infra-status:				## Show running container status
@@ -263,24 +189,17 @@ jfr-dump:				## Snapshot the current JFR recording to results/flight-<timestamp>
 	echo "open with: jmc $$OUT  (or convert to flame graph)"
 
 .PHONY: reset-state
-reset-state:				## Wipe Redis freq:* counters between stress runs (bidder must be stopped first; restart it manually after)
-	@echo "=== resetting Redis state for a clean stress run ==="
-	@CONTAINER=$$(docker-compose ps -q redis); \
-	if [ -z "$$CONTAINER" ]; then echo "ERROR: Redis container not running. 'make infra-up' first."; exit 1; fi; \
-	BEFORE_TOTAL=$$(docker exec $$CONTAINER redis-cli DBSIZE); \
-	BEFORE_FREQ=$$(docker exec $$CONTAINER redis-cli --scan --pattern 'freq:*' | wc -l | tr -d ' '); \
-	echo "before: $$BEFORE_TOTAL total keys, $$BEFORE_FREQ freq:* counters"; \
-	if [ "$$BEFORE_FREQ" != "0" ]; then \
-	  echo "wiping freq:* counters (xargs runs inside the container — fast)..."; \
-	  docker exec $$CONTAINER sh -c 'redis-cli --scan --pattern "freq:*" | xargs -r redis-cli DEL > /dev/null'; \
+reset-state:				## Wipe freq-cap counters in whichever stores are running. Skips stores that are down.
+	@REDIS=$$(docker-compose ps -q redis 2>/dev/null); \
+	if [ -n "$$REDIS" ] && docker exec $$REDIS redis-cli ping >/dev/null 2>&1; then \
+	  COUNT=$$(docker exec $$REDIS sh -c 'redis-cli --scan --pattern "freq:*" | xargs -r redis-cli DEL' 2>/dev/null); \
+	  echo "redis: wiped $${COUNT:-0} freq:* keys"; \
 	fi; \
-	AFTER_TOTAL=$$(docker exec $$CONTAINER redis-cli DBSIZE); \
-	AFTER_FREQ=$$(docker exec $$CONTAINER redis-cli --scan --pattern 'freq:*' | wc -l | tr -d ' '); \
-	echo "after:  $$AFTER_TOTAL total keys, $$AFTER_FREQ freq:* counters"; \
-	echo ""; \
-	echo "Redis state clean. User-segment data preserved ($$AFTER_TOTAL keys)."; \
-	echo "Now restart the bidder for a clean run:"; \
-	echo "  → Ctrl-C in the bidder terminal, then 'make run-prod-load'"
+	AERO=$$(docker-compose ps -q aerospike 2>/dev/null); \
+	if [ -n "$$AERO" ]; then \
+	  docker exec $$AERO asinfo -v "truncate:namespace=rtb;set=freq" >/dev/null 2>&1 && echo "aerospike: rtb.freq truncated"; \
+	fi; \
+	echo "freq state reset"
 
 # ── 6. Verify / test ──────────────────────────────────────────────────────────
 
@@ -318,41 +237,49 @@ load-test-spike:			## k6 spike test — sudden burst to 500 RPS (recovery)
 	k6 run load-test/k6-spike.js
 
 # ── 7a. Stress (constant-arrival-rate per RPS — pure-load percentiles) ────────
-# Each runs 30s warmup + 3min measurement at the target rate. Thresholds
-# apply ONLY to the measurement window via {phase:measure} tag filter.
-#
-# Important: with pacing.type=local, reusing the same JVM across runs burns the
-# in-memory campaign budgets and invalidates repeated measurements. The default
-# 5K target therefore uses the clean stop/reset/restart path below.
+# Each: reset freq state → run k6 (30s warmup + 3min measure at target rate) →
+# save summary. Reset is store-agnostic and skips any store that isn't running.
+# Thresholds apply ONLY to the measure window via {phase:measure} tag filter.
 
-.PHONY: load-test-stress-5k-live
-load-test-stress-5k-live:			## k6 stress against the CURRENT running bidder (unsafe for repeated local-budget runs)
-	STRESS_RATE=$${STRESS_RATE:-5000}  k6 run load-test/k6-stress.js
+# Internal helper — every per-RPS target calls this with RATE
+define run_stress_test
+	@curl -sf http://localhost:8080/health > /dev/null || (echo "ERROR: bidder not running on :8080. Start it with 'make run-prod-load' in another terminal." && exit 1)
+	@$(MAKE) reset-state >/dev/null
+	@mkdir -p results
+	@TS=$$(date +%Y%m%d-%H%M%S); \
+	STRESS_RATE=$1 STRESS_ABORT_ON_FAIL=$${STRESS_ABORT_ON_FAIL:-false} k6 run --summary-export results/k6-stress-$1-$$TS.json load-test/k6-stress.js
+endef
 
 .PHONY: load-test-stress-5k
-load-test-stress-5k: load-test-stress-5k-clean	## k6 stress — 5,000 RPS constant, fresh bidder each run
+load-test-stress-5k:			## k6 stress at 5,000 RPS (30s warmup + 3min measure)
+	$(call run_stress_test,5000)
 
 .PHONY: load-test-stress-10k
-load-test-stress-10k:			## k6 stress — 10,000 RPS constant, 3 min measure
-	STRESS_RATE=10000 k6 run load-test/k6-stress.js
+load-test-stress-10k:			## k6 stress at 10,000 RPS
+	$(call run_stress_test,10000)
 
 .PHONY: load-test-stress-25k
-load-test-stress-25k: load-test-stress-25k-clean	## k6 stress — 25,000 RPS constant, fresh bidder each run
+load-test-stress-25k:			## k6 stress at 25,000 RPS
+	$(call run_stress_test,25000)
 
 .PHONY: load-test-stress-50k
-load-test-stress-50k:			## k6 stress — 50,000 RPS constant, 3 min measure
-	STRESS_RATE=$${STRESS_RATE:-5000}0 k6 run load-test/k6-stress.js
+load-test-stress-50k:			## k6 stress at 50,000 RPS
+	$(call run_stress_test,50000)
 
 .PHONY: load-test-stress-100k
-load-test-stress-100k:			## k6 stress — 100,000 RPS constant, 3 min measure (M5 Pro sweat zone)
-	STRESS_RATE=100000 k6 run load-test/k6-stress.js
+load-test-stress-100k:			## k6 stress at 100,000 RPS
+	$(call run_stress_test,100000)
 
 .PHONY: load-test-stress-burn
-load-test-stress-burn:			## k6 BURN — 200,000 RPS, 5 min measure. No mercy. Either the bidder breaks or k6 does.
-	STRESS_RATE=200000 STRESS_DURATION=5m k6 run load-test/k6-stress.js
+load-test-stress-burn:			## k6 BURN — 200,000 RPS, 5 min measure
+	@curl -sf http://localhost:8080/health > /dev/null || (echo "ERROR: bidder not running on :8080." && exit 1)
+	@$(MAKE) reset-state >/dev/null
+	@mkdir -p results
+	@TS=$$(date +%Y%m%d-%H%M%S); \
+	STRESS_RATE=200000 STRESS_DURATION=5m STRESS_ABORT_ON_FAIL=false k6 run --summary-export results/k6-stress-burn-$$TS.json load-test/k6-stress.js
 
 .PHONY: load-test-stress
-load-test-stress: load-test-stress-5k load-test-stress-10k load-test-stress-25k load-test-stress-50k	## All stress rates 5k → 50k
+load-test-stress: load-test-stress-5k load-test-stress-10k load-test-stress-25k load-test-stress-50k	## Run 5k → 50k in sequence
 
 .PHONY: load-test-all
 load-test-all:				## Full sequence: baseline → ramp → spike → stress 5k/10k/25k/50k
@@ -375,7 +302,7 @@ logs-json:				## Tail the structured JSON log live
 
 .PHONY: help
 help:					## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) \
+	@grep -E '^[a-zA-Z0-9_-]+:.*##' Makefile \
 	  | awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 .DEFAULT_GOAL := help

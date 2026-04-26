@@ -21,7 +21,10 @@ import com.rtb.event.KafkaEventPublisher;
 import com.rtb.event.NoOpEventPublisher;
 import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
+import com.rtb.frequency.AerospikeFrequencyCapper;
+import com.rtb.frequency.FrequencyCapper;
 import com.rtb.frequency.RedisFrequencyCapper;
+import com.rtb.config.AerospikeConfig;
 import com.rtb.pacing.BudgetMetrics;
 import com.rtb.pacing.BudgetPacer;
 import com.rtb.pacing.DistributedBudgetPacer;
@@ -146,9 +149,10 @@ public final class Application {
         if (scorer instanceof AutoCloseable closeableScorer) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeableScorer), "shutdown-scorer"));
         }
-        RedisFrequencyCapper frequencyCapper = new RedisFrequencyCapper(
-                redisConfig, metricsRegistry.registry());
-        Runtime.getRuntime().addShutdownHook(new Thread(frequencyCapper::close, "shutdown-freq-capper"));
+        FrequencyCapper frequencyCapper = createFrequencyCapper(config, redisConfig, metricsRegistry.registry());
+        if (frequencyCapper instanceof AutoCloseable closeableCapper) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> closeQuietly(closeableCapper), "shutdown-freq-capper"));
+        }
 
         // Resilience — separate circuit breakers for Redis and Kafka
         int redisFailures = config.getInt("resilience.redis.failure.threshold", 5);
@@ -277,7 +281,7 @@ public final class Application {
                     System.err.println("ERROR: " + friendlyStartupError(err));
                     System.err.println("       Full stack trace written to logs/rtb-bidder.log");
                     System.err.println();
-                    closeQuietly(frequencyCapper);
+                    if (frequencyCapper instanceof AutoCloseable c) closeQuietly(c);
                     closeQuietly(userSegmentRepo);
                     vertx.close();
                     System.exit(1);
@@ -289,6 +293,29 @@ public final class Application {
             resource.close();
         } catch (Exception e) {
             logger.warn("Failed to close resource: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Picks the freq-cap backend at startup based on freqcap.store property.
+     *   redis      → RedisFrequencyCapper (default; uses round-robin Lettuce connections)
+     *   aerospike  → AerospikeFrequencyCapper (single-record atomic INCR + TTL via operate())
+     */
+    private static FrequencyCapper createFrequencyCapper(AppConfig config,
+                                                          RedisConfig redisConfig,
+                                                          io.micrometer.core.instrument.MeterRegistry registry) {
+        String store = config.get("freqcap.store", "redis").toLowerCase();
+        switch (store) {
+            case "aerospike":
+                AerospikeConfig aerospikeConfig = AerospikeConfig.from(config);
+                logger.info("Frequency-cap store: aerospike at {}:{}", aerospikeConfig.host(), aerospikeConfig.port());
+                return new AerospikeFrequencyCapper(aerospikeConfig, registry);
+            case "redis":
+                logger.info("Frequency-cap store: redis at {}", redisConfig.uri());
+                return new RedisFrequencyCapper(redisConfig, registry);
+            default:
+                throw new IllegalArgumentException(
+                        "Unknown freqcap.store: '" + store + "' — must be 'redis' or 'aerospike'");
         }
     }
 

@@ -168,6 +168,25 @@ services:
     environment:
       ENABLE_METRICS: "true"
 
+  # ── Aerospike — alternative frequency-cap store ───────────────────────────
+  # Only starts when explicitly enabled. Run with:
+  #   docker-compose --profile aerospike up -d
+  # The bidder must be started with FREQCAP_STORE=aerospike to use this service.
+  aerospike:
+    image: aerospike/aerospike-server:latest
+    profiles: ["aerospike"]
+    ports:
+      - "3500:3000"     # client (binary) protocol — host 3500 to avoid clashing with Grafana's 3000
+      - "3501:3001"     # fabric (cluster comms — single-node here, harmless)
+      - "3502:3002"     # heartbeat
+      - "3503:3003"     # info
+    environment:
+      NAMESPACE: rtb
+      MEM_GB: "1"
+      DEFAULT_TTL: "3600"
+    volumes:
+      - aerospike-data:/opt/aerospike/data
+
 volumes:
   redis-data:
   kafka-data:
@@ -175,3 +194,4 @@ volumes:
   clickhouse-data:
   prometheus-data:
   grafana-data:
+  aerospike-data:

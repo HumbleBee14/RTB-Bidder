@@ -22,7 +22,7 @@ This is the operator's manual for the RTB bidder. Every section is a self-contai
   - [D.3 Low-memory startup (laptops)](#d3-low-memory-startup-laptops)
   - [D.4 What successful startup looks like](#d4-what-successful-startup-looks-like)
 - [Part E — Seeding test data](#part-e--seeding-test-data)
-  - [E.1 Seed Redis with 10K users](#e1-seed-redis-with-10k-users)
+  - [E.1 Seed Redis with 1M users](#e1-seed-redis-with-1m-users)
   - [E.2 Campaigns (dummy vs real)](#e2-campaigns-dummy-vs-real)
 - [Part F — Testing the app](#part-f--testing-the-app)
   - [F.1 Health check](#f1-health-check)
@@ -139,33 +139,48 @@ The absolute minimum to see the app respond to a bid request.
 
 ## Make command reference
 
-All common tasks in one place. Run `make help` to see this at any time.
+All common tasks in one place. Run `make help` for the live list.
 
-| # | Command | What it does |
+| Group | Command | What it does |
 |---|---|---|
-| 1 | `make setup` | **First-time only** — start all Docker services + seed Redis |
-| 2 | `make build` | Build the fat JAR |
-| 2 | `make rebuild` | Clean + full rebuild |
-| 3 | `make run-jar` | Run existing JAR (fastest, no rebuild) |
-| 3 | `make run` | Build + run (default: JSON campaigns, NoOp events) |
-| 3 | `make run-prod` | Build + run with Postgres + Kafka |
-| 3 | `make run-load` | Build + run optimised for load testing |
-| 4 | `make infra-up` | Start all 6 Docker services |
-| 4 | `make infra-up-minimal` | Start Redis only |
-| 4 | `make infra-start` | Resume stopped containers (data intact) |
-| 4 | `make infra-stop` | Pause containers (data kept) |
-| 4 | `make infra-down` | Remove containers (data volumes kept) |
-| 4 | `make infra-reset` | ⚠ Wipe containers + volumes (re-seed needed) |
-| 4 | `make infra-status` | Show container status |
-| 5 | `make seed-redis` | Seed Redis with 10K test users |
-| 6 | `make health` | Check bidder health endpoint |
-| 6 | `make bid` | Fire a sample bid request |
-| 6 | `make test` | Run unit tests |
-| 7 | `make load-test-baseline` | k6 — 100 RPS constant for 2 min |
-| 7 | `make load-test-ramp` | k6 — 50 → 1000 RPS over 4 min |
-| 7 | `make load-test-spike` | k6 — sudden burst to 500 RPS |
-| 8 | `make logs` | Tail plain-text log live |
-| 8 | `make logs-json` | Tail structured JSON log live |
+| Setup | `make setup` | **First-time only** — starts Docker services + seeds 1M users into Redis |
+| Build | `make build` | Build the fat JAR |
+|       | `make rebuild` | Clean + full rebuild |
+|       | `make test` | Run unit tests |
+| Run | `make run-jar` | Run existing JAR without rebuilding (fastest) |
+|     | `make run` | Build + run with `JVM_BASE` flags |
+|     | `make run-prod` | Build + run with `JVM_PROD` (2 GB heap, ZGC, GC log) |
+|     | `make run-load` | Build + run with `JVM_LOAD` (production flags + JFR + minimal logging) |
+|     | `make run-prod-load` | Alias for `run-load` |
+|     | `make stop-bidder` | Kill any bidder process listening on :8080 |
+| Infra | `make infra-up` | Start all infra (Aerospike included if `FREQCAP_STORE=aerospike` in `.env`) |
+|       | `make infra-up-minimal` | Start Redis only |
+|       | `make infra-start` | Resume stopped containers (data intact) |
+|       | `make infra-stop` | Pause ALL containers including Aerospike (data kept) |
+|       | `make infra-down` | Remove ALL containers (volumes kept) |
+|       | `make infra-reset` | ⚠ Remove containers AND volumes — re-seed needed |
+|       | `make infra-status` | Show container status |
+|       | `make aerospike-down` | Stop and remove just the Aerospike container |
+| Data | `make seed-redis` | Seed Redis with 1M synthetic users (~3 s via RESP pipe) |
+|      | `make redis-count` | Show how many keys are currently in Redis |
+|      | `make reset-state` | Wipe freq-cap counters in whichever stores are running |
+| Verify | `make health` | Check bidder /health endpoint |
+|        | `make bid` | Fire a sample bid request |
+| Load test | `make load-test-baseline` | k6 baseline — 100 RPS for 2 min (sanity) |
+|           | `make load-test-ramp` | k6 ramp — 50 → 5,000 RPS over ~6 min (find knee) |
+|           | `make load-test-spike` | k6 spike — sudden burst to 500 RPS (recovery) |
+|           | `make load-test-stress-5k` | 5K RPS, 30s warmup + 3min measure |
+|           | `make load-test-stress-10k` | 10K RPS |
+|           | `make load-test-stress-15k` | 15K RPS |
+|           | `make load-test-stress-20k` | 20K RPS |
+|           | `make load-test-stress-25k` | 25K RPS |
+|           | `make load-test-stress-50k` | 50K RPS |
+|           | `make load-test-stress-100k` | 100K RPS |
+|           | `make load-test-stress-burn` | 200K RPS for 5 min — no mercy |
+|           | `make pre-warm` | 500 RPS × 5 min, primes the segment cache |
+| Profiling | `make jfr-dump` | Snapshot the live JFR recording to `results/flight-<ts>.jfr` |
+| Logs | `make logs` | Tail plain-text log live |
+|      | `make logs-json` | Tail structured JSON log live |
 
 ---
 
@@ -193,7 +208,7 @@ docker-compose up -d redis
 make seed-redis
 
 # Raw
-bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli
+python3 docker/seed-redis.py | docker exec -i $(docker-compose ps -q redis) redis-cli --pipe
 ```
 
 **Step 3 — Start the bidder:**
@@ -337,21 +352,22 @@ All the flags a real production deployment would use:
 ```bash
 java \
   -XX:+UseZGC \
-  -XX:+ZGenerational \
-  -Xms512m -Xmx512m \
+  -Xms2g -Xmx2g \
   -XX:+AlwaysPreTouch \
   --sun-misc-unsafe-memory-access=allow \
+  --enable-native-access=ALL-UNNAMED \
   -Xlog:gc*:file=results/gc.log:time,uptime,level,tags \
   -jar target/rtb-bidder-1.0.0.jar
 ```
 
 | Flag | Why it matters |
 |------|----------------|
-| `-XX:+UseZGC` | Z Garbage Collector — sub-millisecond pauses |
-| `-XX:+ZGenerational` | Generational mode — better for our short-lived request objects |
-| `-Xms=-Xmx` | Fixed heap — no resize pauses during operation |
+| `-XX:+UseZGC` | Z Garbage Collector — sub-millisecond pauses (generational since Java 24) |
+| `-Xms=-Xmx` (set to 2g) | Fixed heap — no resize pauses; sized for sustained ZGC headroom under high-RPS allocation |
 | `-XX:+AlwaysPreTouch` | Touch all heap pages at startup — no page-fault jitter later |
 | `-Xlog:gc*:file=...` | Write GC events to file for analysis |
+| `--sun-misc-unsafe-memory-access=allow` | Silences Netty zero-copy deprecation warning |
+| `--enable-native-access=ALL-UNNAMED` | Silences native DNS resolver warning |
 
 ## D.3 Low-memory startup (laptops)
 
@@ -393,24 +409,27 @@ curl http://localhost:8080/health
 
 # Part E — Seeding test data
 
-## E.1 Seed Redis with 10K users
+## E.1 Seed Redis with 1M users
 
 Without user segments, the targeting engine can't match any campaigns, so every bid request returns no-bid.
 
 **Seed:**
 ```bash
-bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli
+make seed-redis
+# Equivalent: python3 docker/seed-redis.py | docker exec -i $(docker-compose ps -q redis) redis-cli --pipe
 ```
+
+The seeder writes 1M users via the RESP binary protocol — typically completes in ~3 seconds.
 
 **Verify:**
 ```bash
-docker exec $(docker ps -qf name=redis) redis-cli DBSIZE
+make redis-count
 ```
-Expected: `10000` (or slightly more — includes some metadata keys)
+Expected: `1000000`
 
 **Inspect one user:**
 ```bash
-docker exec $(docker ps -qf name=redis) redis-cli SMEMBERS user:user_00001:segments
+docker exec $(docker-compose ps -q redis) redis-cli SMEMBERS user:user_0000001:segments
 ```
 Expected: 3-8 random segments like `sports`, `tech`, `male`, `age_25_34`.
 
@@ -1030,101 +1049,88 @@ GROUP BY no_bid_reason ORDER BY cnt DESC;
 
 # Part L — Load testing
 
+The make targets handle JVM flags, JFR, summary export, and resetting freq-cap state between runs. Use them.
+
 ## L.1 Preparation
 
-**Step 1 — Start infrastructure:**
 ```bash
-docker-compose up -d redis prometheus grafana
-bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli
+make infra-up         # all infra (or `make infra-up-minimal` for Redis-only)
+make seed-redis       # 1M synthetic users
+make run-prod-load    # bidder with JVM_LOAD: 2g heap, ZGC, JFR continuous, minimal logs
+                      # leave running in its own terminal
 ```
 
-**Step 2 — Start bidder in load-test mode** (minimal logging to avoid blocking event loop):
-```bash
-CONSOLE_ENABLED=false JSON_ENABLED=false \
-  java -XX:+UseZGC -XX:+ZGenerational -Xms512m -Xmx512m -XX:+AlwaysPreTouch \
-       --sun-misc-unsafe-memory-access=allow \
-       -Xlog:gc*:file=results/gc.log:time,uptime,level,tags \
-       -Drtb.log.level=WARN \
-       -jar target/rtb-bidder-1.0.0.jar
-```
-
-Create the results directory if it doesn't exist:
-```bash
-mkdir -p results
-```
-
-## L.2 Warm up the JIT
-
-Without JIT warmup, the first few thousand requests are 10-50x slower. Run this before any measurement:
+In a second terminal:
 
 ```bash
-for i in $(seq 1 500); do
-  curl -s -o /dev/null -X POST http://localhost:8080/bid -H "Content-Type: application/json" \
-    -d "{\"user_id\":\"user_$(printf '%05d' $((RANDOM % 10000 + 1)))\",\"app\":{\"id\":\"a1\",\"category\":\"sports\",\"bundle\":\"com.s\"},\"device\":{\"type\":\"mobile\",\"os\":\"android\",\"geo\":\"US\"},\"ad_slots\":[{\"id\":\"s1\",\"sizes\":[\"300x250\"],\"bid_floor\":0.10}]}" &
-  if (( i % 50 == 0 )); then wait; fi
-done
-wait
-echo "Warmup done"
+make health           # confirm /health returns 200
+make bid              # confirm one bid round-trips
 ```
 
-## L.3 Run baseline test
+## L.2 Run a stress test
 
-**What it does:** 100 RPS constant for 2 minutes. Establishes stable latency numbers.
+Each `load-test-stress-*` target:
+1. Verifies the bidder is up
+2. Calls `make reset-state` (wipes freq counters in whichever stores are running)
+3. Runs k6 with 30 s warmup + 3 min measure at the target rate
+4. Saves the k6 summary JSON to `results/k6-stress-<RATE>-<ts>.json`
 
 ```bash
-k6 run --summary-trend-stats="avg,min,med,max,p(90),p(95),p(99),p(99.9)" \
-  load-test/k6-baseline.js | tee results/baseline-results.txt
+make load-test-stress-5k       # 5K RPS — sanity / baseline
+make load-test-stress-10k      # 10K
+make load-test-stress-15k      # 15K — last cleanly-passing rate on a single Mac
+make load-test-stress-20k      # 20K — typically the SLA boundary
+make load-test-stress-25k      # 25K — rig-bound on most laptops
+make load-test-stress-50k      # 50K — bidder will be CPU-saturated
+make load-test-stress-burn     # 200K for 5 min — no mercy
 ```
 
-**What to look at:** the summary block at the end. Key numbers:
-- `http_req_duration` p99 — should be under 50ms
-- `error_rate` — should be 0%
-- `http_reqs` — should be ~12000 (100 RPS × 120s)
+Thresholds applied to the **measure** phase (warmup excluded via `{phase:measure}` tag):
+`p50 < 20 ms`, `p95 < 45 ms`, `p99 < 50 ms`, `p99.9 < 100 ms`, `bid_rate > 80%`, `error_rate < 1%`.
+Set `STRESS_ABORT_ON_FAIL=false` to let the soak run the full duration even if a threshold trips.
 
-## L.4 Run ramp test
-
-**What it does:** Gradually ramps 50 → 1000 RPS over 4 minutes. Finds the saturation point.
+## L.3 Other test profiles
 
 ```bash
-k6 run --summary-trend-stats="avg,min,med,max,p(90),p(95),p(99),p(99.9)" \
-  load-test/k6-ramp.js | tee results/ramp-results.txt
+make load-test-baseline    # 100 RPS for 2 min — sanity check
+make load-test-ramp        # 50 → 5,000 RPS over ~6 min — find the soft knee
+make load-test-spike       # sudden burst to 500 RPS — recovery behaviour
+make pre-warm              # 500 RPS × 5 min — fills Caffeine segment cache
 ```
 
-**What to look at:** the **knee** — the RPS level at which p99 starts climbing sharply. Past this, the server is saturated and every additional request adds queueing delay.
+## L.4 Analyze the results
 
-## L.5 Run spike test
-
-**What it does:** Stable 50 RPS → sudden spike to 500 RPS (10x) → hold 30s → drop back. Tests burst resilience.
-
+**Live JFR snapshot** (while the bidder is still running):
 ```bash
-k6 run --summary-trend-stats="avg,min,med,max,p(90),p(95),p(99),p(99.9)" \
-  load-test/k6-spike.js | tee results/spike-results.txt
+make jfr-dump              # → results/flight-<timestamp>.jfr
+# Open in JDK Mission Control, or use jfr CLI:
+jfr print --events ExecutionSample --stack-depth 1 results/flight-<ts>.jfr \
+  | grep -E "^\s+[a-z]" | sort | uniq -c | sort -rn | head -15
 ```
 
-**What to look at:**
-- Error rate during spike (should stay under 10%)
-- How fast p99 recovers after spike ends
-
-## L.6 Analyze results
-
-**GC pause times** (should all be sub-millisecond with ZGC):
-```bash
-# Top 5 longest pauses
-grep "Pause" results/gc.log | awk '{gsub(/ms$/, "", $NF); print $NF}' | sort -n | tail -5
-
-# Total GC cycles
-grep -c "Pause Mark Start" results/gc.log
-```
-
-**Find the slowest stage:**
+**Per-stage latency from Prometheus metrics:**
 ```bash
 curl -s http://localhost:8080/metrics | grep pipeline_stage_latency_seconds_sum
 ```
-Divide `_sum` by `_count` for each stage → average latency per call. The dominant stage is your bottleneck.
+Divide `_sum` by `_count` per stage → avg latency per call. The dominant stage is your bottleneck.
 
-**Run load test against remote bidder** (e.g., k6 on your laptop, bidder on another machine):
+**Confirm post-response writes aren't being dropped:**
 ```bash
-k6 run -e TARGET_URL=http://192.168.1.50:8080 load-test/k6-baseline.js
+curl -s http://localhost:8080/metrics | grep -E "impression_dropped|impression_queue"
+```
+`postresponse_impression_dropped_total = 0` is the goal — non-zero means the bounded queue saturated.
+
+**GC pauses from the GC log** (should all be sub-ms with ZGC):
+```bash
+grep "Pause" results/gc.log | awk '{gsub(/ms$/, "", $NF); print $NF}' | sort -n | tail -5
+```
+
+## L.5 Test against a remote bidder
+
+If you run k6 on a different host than the bidder, point it at the bidder's address:
+
+```bash
+TARGET_URL=http://192.168.1.50:8080 STRESS_RATE=10000 k6 run load-test/k6-stress.js
 ```
 
 ---
@@ -1174,8 +1180,8 @@ Check the `X-NoBid-Reason` header:
 
 | Reason | Fix |
 |--------|-----|
-| `NO_MATCHING_CAMPAIGN` | User has no segments in Redis — run `bash docker/init-redis.sh \| ...` |
-| `ALL_FREQUENCY_CAPPED` | User over-exposed — `redis-cli --scan --pattern 'user:*:campaign:*' \| xargs redis-cli DEL` |
+| `NO_MATCHING_CAMPAIGN` | User has no segments in Redis — run `make seed-redis` |
+| `ALL_FREQUENCY_CAPPED` | User over-exposed — `make reset-state` (wipes `freq:*` counters) |
 | `BUDGET_EXHAUSTED` | All campaigns out of budget — restart bidder to reload budgets |
 | `TIMEOUT` | Pipeline over 50ms — check Redis latency, JIT warmup, check logs for slow stage |
 | `INTERNAL_ERROR` | Exception — read the log stack trace |
@@ -1284,38 +1290,57 @@ make test               # run unit tests
 
 # ── 3. Run ───────────────────────────────────────────────────────────────────
 make run-jar            # run existing JAR without rebuilding (fastest)
-make run                # build + run with default settings (JSON campaigns, NoOp events)
-make run-prod           # build + run with Postgres campaigns + Kafka events
-make run-load           # build + run optimised for load testing (minimal logging)
+make run                # build + run with JVM_BASE flags (source/events follow .env)
+make run-prod           # build + run with JVM_PROD (2 GB heap, ZGC, GC log)
+make run-load           # build + run with JVM_LOAD (production flags + JFR + minimal logs)
+make run-prod-load      # alias for run-load
+make stop-bidder        # kill any bidder process listening on :8080
 
 # ── 4. Docker infra ──────────────────────────────────────────────────────────
-make infra-up           # start all 6 services (Redis, Kafka, Postgres, ClickHouse, Prometheus, Grafana)
+make infra-up           # start all infra (Aerospike too, if FREQCAP_STORE=aerospike in .env)
 make infra-up-minimal   # start Redis only (minimum to run the bidder)
 make infra-start        # resume previously stopped containers (data intact)
-make infra-stop         # pause containers (data kept, fast restart)
-make infra-down         # remove containers (data volumes still kept)
-make infra-reset        # ⚠ wipe everything including data — re-seed needed after this
+make infra-stop         # pause ALL containers including Aerospike (data kept)
+make infra-down         # remove ALL containers (data volumes still kept)
+make infra-reset        # ⚠ remove containers AND volumes — re-seed needed
 make infra-status       # show running container status
+make aerospike-down     # stop and remove just the Aerospike container
 
-# ── 5. Seed ──────────────────────────────────────────────────────────────────
-make seed-redis         # seed Redis with 10K test users (run once after infra-up)
+# ── 5. Seed / state ──────────────────────────────────────────────────────────
+make seed-redis         # seed Redis with 1M synthetic users (~3 s via RESP pipe)
+make redis-count        # show how many keys are currently in Redis
+make reset-state        # wipe freq-cap counters in whichever stores are running
 
 # ── 6. Verify ────────────────────────────────────────────────────────────────
 make health             # curl /health — check bidder is up
 make bid                # fire a sample bid request — check pipeline works
 
 # ── 7. Load testing ──────────────────────────────────────────────────────────
-make load-test-baseline # k6 baseline — 100 RPS constant for 2 min
-make load-test-ramp     # k6 ramp — 50 → 1000 RPS over 4 min
-make load-test-spike    # k6 spike — sudden burst to 500 RPS
+make load-test-baseline    # 100 RPS for 2 min — sanity
+make load-test-ramp        # 50 → 5,000 RPS over ~6 min — find soft knee
+make load-test-spike       # sudden burst to 500 RPS — recovery
+make pre-warm              # 500 RPS × 5 min — prime the segment cache
+make load-test-stress-5k   # 5K RPS, 30 s warmup + 3 min measure
+make load-test-stress-10k  # 10K
+make load-test-stress-15k  # 15K
+make load-test-stress-20k  # 20K
+make load-test-stress-25k  # 25K
+make load-test-stress-50k  # 50K
+make load-test-stress-100k # 100K
+make load-test-stress-burn # 200K for 5 min — no mercy
 
-# ── 8. Logs ──────────────────────────────────────────────────────────────────
+# ── 8. Profiling ─────────────────────────────────────────────────────────────
+make jfr-dump           # snapshot the live JFR recording → results/flight-<ts>.jfr
+
+# ── 9. Logs ──────────────────────────────────────────────────────────────────
 make logs               # tail plain-text log live
 make logs-json          # tail structured JSON log live
 ```
 
-All JVM flags (`-XX:+UseZGC`, `--sun-misc-unsafe-memory-access=allow`, etc.) are defined
-once at the top of `Makefile` — change there and every target picks it up automatically.
+All JVM flags (`-XX:+UseZGC`, heap, JFR config, etc.) are defined once at the top of
+`Makefile` (`JVM_BASE`, `JVM_PROD`, `JVM_LOAD`) — change there and every target picks
+it up automatically. Source / events / freq-cap-store / scoring type are all driven
+by `.env` (which auto-loads into the Makefile environment).
 
 ---
 
@@ -1340,30 +1365,30 @@ docker-compose down -v                     # stop + wipe data
 
 ### Run bidder (all modes)
 ```bash
-# Minimal (JSON campaigns, NoOp events)
-java -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
+# Default (JVM_BASE flags; source/events/scoring/freq-cap-store from .env)
+java --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED \
+     -XX:+UseZGC -jar target/rtb-bidder-1.0.0.jar
 
-# Production-style
-CAMPAIGNS_SOURCE=postgres EVENTS_TYPE=kafka \
-  java -XX:+UseZGC -XX:+ZGenerational -Xms512m -Xmx512m -XX:+AlwaysPreTouch \
-       --sun-misc-unsafe-memory-access=allow \
-       -Xlog:gc*:file=results/gc.log \
-       -jar target/rtb-bidder-1.0.0.jar
+# Production-style (2 GB heap, ZGC, GC log)
+java --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED \
+     -XX:+UseZGC -Xms2g -Xmx2g -XX:+AlwaysPreTouch \
+     -Xlog:gc*:file=results/gc.log:time,uptime,level,tags \
+     -jar target/rtb-bidder-1.0.0.jar
 
-# Load-test mode (minimal logging)
+# Load-test mode (production flags + JFR + minimal logs)
 CONSOLE_ENABLED=false JSON_ENABLED=false \
-  java -XX:+UseZGC -Xms512m -Xmx512m -Drtb.log.level=WARN \
+  java --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED \
+       -XX:+UseZGC -Xms2g -Xmx2g -XX:+AlwaysPreTouch \
+       -Drtb.log.level=WARN \
+       -XX:StartFlightRecording=settings=profile,name=bidder,maxage=15m,maxsize=512m,disk=true,dumponexit=true,filename=results/flight-exit.jfr \
        -jar target/rtb-bidder-1.0.0.jar
-
-# Low-memory
-java -XX:+UseZGC -Xms128m -Xmx128m -jar target/rtb-bidder-1.0.0.jar
 ```
 
 ### Seed data
 ```bash
-bash docker/init-redis.sh | docker exec -i $(docker ps -qf name=redis) redis-cli
-docker exec -i $(docker ps -qf name=postgres) psql -U rtb < docker/init-postgres.sql
-docker exec -i $(docker ps -qf name=clickhouse) clickhouse-client -d rtb --multiquery < docker/init-clickhouse.sql
+python3 docker/seed-redis.py | docker exec -i $(docker-compose ps -q redis) redis-cli --pipe
+# Postgres campaigns are seeded automatically by docker/init-postgres.sql on first container start.
+# ClickHouse schema is provisioned automatically via docker-compose.
 ```
 
 ### Verify

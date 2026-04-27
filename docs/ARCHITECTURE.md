@@ -68,7 +68,7 @@ User opens webpage
 |---|---|---|
 | Bid deadline (SLA) | 50ms | Publisher waits max 100ms; network takes ~30-50ms |
 | Throughput | 50,000+ req/s | Peak ad traffic on a major publisher |
-| Memory budget | 512MB heap | Predictable, no GC pressure from heap growth |
+| Memory budget | 2 GB heap | Sized for sustained ZGC headroom under high-RPS allocation rate; smaller heaps cause continuous GC at scale |
 | Availability | 99.99% | Ad not shown = revenue lost (no retries) |
 
 ---
@@ -133,7 +133,8 @@ User opens webpage
 | **Analytics** | ClickHouse 24 | OLAP queries on billions of events | MergeTree + Kafka engine for streaming ingestion |
 | **Metrics** | Prometheus + Micrometer | Time-series metrics scraping | Pull model; Micrometer is vendor-neutral |
 | **Dashboards** | Grafana 11 | Live monitoring panels | Pre-provisioned with 11+ panels; no manual setup |
-| **JVM** | Java 21 + ZGC Generational | Low-latency GC | ZGC pauses <1ms even at 512MB heap |
+| **JVM** | Java 21 + ZGC Generational | Low-latency GC | Sub-ms pauses; configured with 2 GB heap (validated for sustained 5K-15K RPS) |
+| **Aerospike (optional)** | Aerospike CE 8 + Aerospike Java client 10 (async) | Alternative freq-cap store | Selected via `FREQCAP_STORE=aerospike`; multi-threaded server, native record-level TTL. Container only starts when selected. |
 | **ML Runtime** | ONNX Runtime 1.19 | pCTR model inference | Language-neutral; Python trains, Java infers |
 
 ### Docker Compose Services
@@ -489,19 +490,35 @@ Redis stores segments for 10,000+ users (seeded by `docker/init-redis.sh`).
 
 ### 6.4 `targeting` — Candidate Filtering
 
-**Files:** `TargetingEngine.java`, `SegmentTargetingEngine.java`, `EmbeddingTargetingEngine.java`, `HybridTargetingEngine.java`
+**Files:** `TargetingEngine.java`, `SegmentTargetingEngine.java`, `EmbeddingTargetingEngine.java`, `HybridTargetingEngine.java`, `SegmentBitmap.java`
 
 **What it does:** Given a user's profile and a campaign, decides if this campaign is eligible to bid for this user.
 
-**Strategy 1: Segment Targeting (default)**
+**Strategy 1: Segment Targeting (default) — bitmap intersection**
 
 ```
-User segments:       { "sports", "male", "age_25_34", "premium" }
-Campaign A targets:  { "sports", "age_25_34" }   → MATCH (intersection non-empty)
-Campaign B targets:  { "luxury", "female" }      → NO MATCH (disjoint sets)
+User segments:       { sports, male, age_25_34, premium }
+Campaign A targets:  { sports, age_25_34 }   → MATCH (intersection non-empty)
+Campaign B targets:  { luxury, female }      → NO MATCH (disjoint sets)
 ```
 
-Algorithm: `Set.retainAll()` — O(n) where n = smaller set size.
+Both sides are encoded as 64-bit bitmaps via `SegmentBitmap`. The registry
+assigns each unique segment string a stable bit position 0–63 on first sight
+(50 segments in our seed → fits one `long`). The intersection check becomes
+a single bitwise operation:
+
+```java
+long userBits   = SegmentBitmap.encode(user.segments());     // once per request
+long targetBits = SegmentBitmap.forCampaign(campaign);        // cached per campaign
+boolean match   = (userBits & targetBits) != 0L;              // 1 AND, 1 compare-zero
+int matchCount  = Long.bitCount(userBits & targetBits);       // 1 hardware popcount
+```
+
+Old design used `Set<String>` intersection — N hash lookups per check, N×campaigns
+per request. Bitmap is two CPU instructions, regardless of segment count. Same
+correctness (registry guarantees `userSegments.contains(s) ↔ (userBits & 1L<<idFor(s)) != 0`).
+Per-campaign target bitmaps are computed once at first use and cached forever
+(invalidated on `CachedCampaignRepository.refresh`).
 
 **Strategy 2: Embedding Targeting**
 
@@ -535,17 +552,38 @@ Best recall, slightly higher CPU cost.
 
 **What it does:** Given a matched candidate, compute a bid price.
 
+**Two-stage pre-filter before scoring:**
+
+1. **`CandidateLimitStage`** runs FIRST — given ~278 segment-matched candidates,
+   keep only the top K (`PIPELINE_CANDIDATES_MAX`, default 32) by `value_per_click`.
+   Implementation: bounded `PriorityQueue` (min-heap of size K). Cost: O(N log K)
+   instead of O(N log N) for a full sort.
+2. **`ScoringStage`** runs after, scoring only those top-K candidates.
+
+This keeps the expensive scoring (especially ML) bounded by K, regardless of
+how many campaigns matched targeting.
+
+**Batched `scoreAll` API:**
+
+`Scorer` exposes both `score(one)` and `scoreAll(list, user, ctx)`. The pipeline
+calls `scoreAll`, letting implementations amortise per-request work across
+candidates. `FeatureWeightedScorer.scoreAll` encodes the user segment bitmap
+ONCE per request (via `SegmentBitmap.encode`) and reuses it for every candidate
+— saves N redundant encodings vs the naive per-call path.
+
 **Strategy 1: Feature-Weighted Scoring**
 
 ```
-score = relevance_score × bid_floor × pacing_factor
+score = relevance × bid_floor × pacing_factor
 
-relevance_score: how many segments matched / total campaign segments
-bid_floor:       minimum price from BidRequest (publisher's floor)
-pacing_factor:   0.0–1.0, reduced when campaign is spending too fast
+relevance      = Long.bitCount(userBits & targetBits) / targetSegments.size()
+                 ↑ same logical "match ratio" as Set intersection,
+                   but via bitwise AND + popcount (1-2 CPU instructions)
+bid_floor      = minimum price from BidRequest
+pacing_factor  = 1.0 (constant; pacing is enforced as a separate pipeline stage)
 ```
 
-Simple, fast (~0.01ms), interpretable.
+Simple, fast (~0.01ms), interpretable. Default scorer.
 
 **Strategy 2: ML Scoring (pCTR)**
 
@@ -592,34 +630,64 @@ Fast path for obvious winners, ML only for uncertain cases. Best latency/accurac
 
 ### 6.6 `frequency` — Exposure Capping
 
-**Files:** `FrequencyCapper.java`, `RedisFrequencyCapper.java`
+**Files:** `FrequencyCapper.java` (interface), `RedisFrequencyCapper.java`, `AerospikeFrequencyCapper.java`
 
-**What it does:** Prevents showing the same ad to the same user too many times (annoying = user tunes out = wasted impressions).
+**What it does:** Prevents showing the same ad to the same user too many times.
 
-**Redis data structure:**
-
-```
-Key:   user:{user_id}:freq:{campaign_id}:{time_window}
-Value: integer (count)
-TTL:   set per time_window (e.g., 86400s for daily)
-
-Example:
-  Key: user:abc123:freq:nike_campaign:2026-04-20
-  Value: 3    ← this user has been shown Nike's ad 3 times today
-  TTL: 43200s (expires at midnight)
-```
-
-**Operation: INCR (atomic)**
+**Storage shape (Redis default):**
 
 ```
-INCR user:abc123:freq:nike_campaign:2026-04-20
-→ returns new value (e.g. 4)
-
-if 4 > campaign.freqCapLimit (e.g. 5) → cap not exceeded → allow
-if 4 > campaign.freqCapLimit (e.g. 3) → cap exceeded → remove candidate
+Key:   freq:{user_id}:{campaign_id}
+Value: integer count (string-encoded), absent = 0
+TTL:   3600s (1-hour rolling window), set on first INCR via Lua script
 ```
 
-Using INCR (not GET + SET) is **atomic** — no race condition when multiple bid servers run in parallel.
+**Hot-path read — score-ordered paged MGET (`FrequencyCapStage`):**
+
+`FrequencyCapStage` runs AFTER scoring, not before. It sorts the scored candidates
+by score (descending) and walks them in pages of `PIPELINE_FREQUENCYCAP_BATCHSIZE`
+(default 16). For each page it issues ONE MGET fetching the freq counts for those
+16 keys. Stops early once `PIPELINE_FREQUENCYCAP_KEEPTOPALLOWED` (default 64)
+candidates have passed.
+
+Why score-ordered paged: in the common case the top scorers are not capped, so
+the first MGET of 16 keys produces 16 allowed candidates and the loop exits. If
+some are capped, the next page kicks in. Compared to the naive "MGET all ~278
+matched candidates", this is typically 1 round-trip of 16 keys vs 1 round-trip
+of 278 keys — much less Redis decode work and CPU per request.
+
+**Hot-path write — `ImpressionRecorder` bounded queue:**
+
+After the bid response is returned, the winning campaign's freq counter must be
+incremented. This happens via `ImpressionRecorder` — a bounded
+`ArrayBlockingQueue<ImpressionWrite>` (default capacity 65536) drained by N
+dedicated worker threads (default 2). The handler offers the write and returns
+immediately; never blocks. If the queue saturates, `record()` increments a
+`postresponse_impression_dropped_total` counter and discards the write.
+
+The actual Redis write is an atomic Lua script: INCR the counter, and on first
+sight (count == 1) set EXPIRE 3600. One round-trip for both ops.
+
+**Connection layout:**
+
+`RedisFrequencyCapper` opens a round-robin array of N read connections + N write
+connections (default 4 + 4) per Redis client. Read traffic (MGET) and write
+traffic (EVAL) are isolated — write backlog can never queue behind read decode
+on the same nioEventLoop thread. The user-segment repository runs its own
+separate connection array (4 connections) so segment SMEMBERS and freq-cap
+traffic don't share decoder threads.
+
+**Pluggable backend:**
+
+`FrequencyCapper` is an interface. The implementation is selected at startup
+via `FREQCAP_STORE` (`redis` | `aerospike`):
+
+- `RedisFrequencyCapper` — round-robin Lettuce, paged MGET, EVAL writes via
+  ImpressionRecorder. Default. Best for single-node, low-RPS, low-latency.
+- `AerospikeFrequencyCapper` — single-record atomic INCR + native record-level
+  TTL via `operate()`. Multi-threaded server-side, designed for ad-tech read+
+  write ratios at very high RPS. Container starts only when selected (Compose
+  profile `aerospike`).
 
 ### 6.7 `pacing` — Budget Management
 
@@ -956,6 +1024,30 @@ JVM flags:
 **Problem:** If Redis is slow (100ms per call), every bid times out. Cascading failure.
 
 **Solution:** After 5 failures, circuit opens. All Redis calls short-circuit instantly (return empty/default). Bid path degrades gracefully. Reconnect probe after 10s cooldown.
+
+### 8.9 Round-Robin Lettuce Connections (read/write split)
+
+**Problem:** A single Lettuce connection has a single nioEventLoop decoder thread. At 5K+ RPS that thread saturates and becomes a serialization point — every Redis response queues behind it. JFR showed 72% CPU on one decoder thread during the saturation, with a "bistable collapse" where the system never self-recovered between consecutive stress runs.
+
+**Solution:** `RedisFrequencyCapper` opens N read connections + N write connections (default 4 + 4) and dispatches commands via `AtomicInteger.getAndIncrement() % N`. Each connection has its own decoder thread, so decode work parallelises across N threads. Read traffic and write traffic are isolated — the post-response EVAL backlog can never queue behind the hot-path MGET reads. Tried `GenericObjectPool` first; the borrow/return lock added 50ms wait per command under 72-worker concurrency. Round-robin array is zero-contention.
+
+### 8.10 Bitmap Segment Matching
+
+**Problem:** `Set<String>` intersection in segment targeting was the top hot method in JFR — `FeatureWeightedScorer.computeRelevance` (978 samples), `HashMap.containsKey` (901), `SegmentTargetingEngine.hasOverlap` (521). At 25K RPS × 1000 campaigns × 10 segments per check = ~155M hash operations per second.
+
+**Solution:** `SegmentBitmap` registry assigns each unique segment string a stable bit position 0–63. Both `userSegments` and campaign `targetSegments` encode to a `long`. The intersection check becomes one bitwise AND + compare-zero (overlap test) or AND + popcount (match-count). Same correctness as set intersection, two CPU instructions instead of N hash lookups. JFR after the change showed all three top hot methods dropped out of the top 50 entirely.
+
+### 8.11 Top-K Candidate Selection (bounded heap)
+
+**Problem:** After bitmap segment matching closed the previous wall, JFR's new top hot section was `TimSort` — `Collections$ReverseComparator2.compare` (2,176 samples), `TimSort.binarySort` (1,815), `TimSort.mergeLo` (1,403), `TimSort.gallopLeft` (661), `TimSort.mergeHi` (319). Source: `CandidateLimitStage` did `sort(BY_VALUE_DESC); subList(0, K)` — full O(N log N) sort just to keep the top K=32 of ~278 segment-matched candidates.
+
+**Solution:** Replaced full sort with a bounded `PriorityQueue` (min-heap of size K). Walk the candidates once, keep K best so far via `siftUp`/`siftDown`. Cost: O(N log K). Same top-K output (order within doesn't matter — `RankingStage` re-sorts by score later). Surgically attributed JFR samples (stack-depth=20) showed `CandidateLimitStage`'s sort cost went from 7,711 samples to 545 samples — **~14× less CPU for the same logical operation**.
+
+### 8.12 ImpressionRecorder (bounded write-behind queue)
+
+**Problem:** Post-response freq-cap increments were raw fire-and-forget on the same Lettuce connections as hot-path reads. Under sustained load the EVAL queue grew unboundedly (no backpressure) and contaminated read latency on the shared decoder thread — a stress run's leftover writes would slow down the next stress run. The "bistable collapse" symptom.
+
+**Solution:** `ImpressionRecorder` wraps writes in a bounded `ArrayBlockingQueue` (default 65536) drained by N dedicated worker threads (default 2). The handler offers and returns; never blocks. If the queue saturates, the write is dropped and `postresponse_impression_dropped_total` increments. At 5K-10K RPS the queue stays at size 0 (drain rate matches submission rate) — verified via `/metrics`. The bounded design means write backlog can never grow unbounded under sustained load.
 
 ---
 

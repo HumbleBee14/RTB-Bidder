@@ -23,6 +23,7 @@ import com.rtb.pipeline.BidPipeline;
 import com.rtb.pipeline.PipelineStage;
 import com.rtb.frequency.AerospikeFrequencyCapper;
 import com.rtb.frequency.FrequencyCapper;
+import com.rtb.frequency.InProcessFrequencyCapper;
 import com.rtb.frequency.RedisFrequencyCapper;
 import com.rtb.config.AerospikeConfig;
 import com.rtb.pacing.BudgetMetrics;
@@ -300,23 +301,43 @@ public final class Application {
      * Picks the freq-cap backend at startup based on freqcap.store property.
      *   redis      → RedisFrequencyCapper (default; uses round-robin Lettuce connections)
      *   aerospike  → AerospikeFrequencyCapper (single-record atomic INCR + TTL via operate())
+     *
+     * If {@code freqcap.in_process.enabled=true} is set, the chosen backend is
+     * wrapped in an {@link InProcessFrequencyCapper} (Caffeine L1 cache).
+     * Mirrors the Rust sibling's `BIDDER__FREQ_CAP__IN_PROCESS_ENABLED` flag.
+     * Off by default — see {@link InProcessFrequencyCapper} javadoc for the
+     * single-instance / sticky-routing constraint.
      */
     private static FrequencyCapper createFrequencyCapper(AppConfig config,
                                                           RedisConfig redisConfig,
                                                           io.micrometer.core.instrument.MeterRegistry registry) {
         String store = config.get("freqcap.store", "redis").toLowerCase();
+        FrequencyCapper backend;
         switch (store) {
             case "aerospike":
                 AerospikeConfig aerospikeConfig = AerospikeConfig.from(config);
                 logger.info("Frequency-cap store: aerospike at {}:{}", aerospikeConfig.host(), aerospikeConfig.port());
-                return new AerospikeFrequencyCapper(aerospikeConfig, registry);
+                backend = new AerospikeFrequencyCapper(aerospikeConfig, registry);
+                break;
             case "redis":
                 logger.info("Frequency-cap store: redis at {}", redisConfig.uri());
-                return new RedisFrequencyCapper(redisConfig, registry);
+                backend = new RedisFrequencyCapper(redisConfig, registry);
+                break;
             default:
                 throw new IllegalArgumentException(
                         "Unknown freqcap.store: '" + store + "' — must be 'redis' or 'aerospike'");
         }
+
+        if (Boolean.parseBoolean(config.get("freqcap.in_process.enabled", "false"))) {
+            long maxUsers = Long.parseLong(config.get("freqcap.in_process.max_users", "500000"));
+            long ttlSec   = Long.parseLong(config.get("freqcap.in_process.ttl_seconds", "3600"));
+            logger.info("Wrapping {} backend with InProcessFrequencyCapper " +
+                            "(maxUsers={}, ttl={}s)",
+                    store, maxUsers, ttlSec);
+            return new InProcessFrequencyCapper(backend, maxUsers,
+                    java.time.Duration.ofSeconds(ttlSec), registry);
+        }
+        return backend;
     }
 
     private static CampaignRepository createCampaignRepository(AppConfig config, ObjectMapper objectMapper) {
